@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
 
 from .config import Config
@@ -80,8 +80,7 @@ class DeterministicPlanner:
             game_map = self.config.get_next_random_map(round_number, rng)
             map_index = self.config.maps.index(game_map)
             creatures = [
-                self.config.get_random_creature_type(rng)
-                for _ in range(per_round)
+                self.config.get_random_creature_type(rng) for _ in range(per_round)
             ]
             rounds.append(
                 RoundPlan(

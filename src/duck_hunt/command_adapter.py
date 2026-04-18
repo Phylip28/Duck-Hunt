@@ -120,9 +120,7 @@ class CommandAdapter:
             rounds = self._parse_int(tokens[3], "rounds")
             creatures_per_round = None
             if len(tokens) == 5:
-                creatures_per_round = self._parse_int(
-                    tokens[4], "creatures_per_round"
-                )
+                creatures_per_round = self._parse_int(tokens[4], "creatures_per_round")
 
             plan = self.planner.build_game_plan(
                 seed_a=seed_a,

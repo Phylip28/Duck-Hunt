@@ -14,6 +14,11 @@ from .storage import RankingEntry, Storage
 from .telemetry import TelemetryEvent, TelemetryLog
 from .timing import ScheduledAction, TimingConfig, TimingEngine
 
+try:
+    from .ui_tk import DuckHuntTkApp
+except Exception:  # pragma: no cover - optional UI dependency
+    DuckHuntTkApp = None
+
 __all__ = [
     "Config",
     "RNG",
@@ -41,3 +46,6 @@ __all__ = [
     "ParityChecker",
     "ParityCaseResult",
 ]
+
+if DuckHuntTkApp is not None:
+    __all__.append("DuckHuntTkApp")

@@ -44,9 +44,7 @@ class ParityChecker:
         expected = case["expected"]
 
         if seed_c != expected["seed_c"]:
-            mismatches.append(
-                f"seed_c expected {expected['seed_c']} got {seed_c}"
-            )
+            mismatches.append(f"seed_c expected {expected['seed_c']} got {seed_c}")
 
         u32_actual = [rng.next_u32() for _ in range(10)]
         if u32_actual != expected["first10_u32"]:
@@ -56,11 +54,11 @@ class ParityChecker:
         rng_float.set_seeds(case["seed_a"], case["seed_b"])
         rng_float.derive_seed_c(case["context"])
         float_actual = [rng_float.next_float() for _ in range(3)]
-        for index, (actual, exp) in enumerate(zip(float_actual, expected["first3_float"])):
+        for index, (actual, exp) in enumerate(
+            zip(float_actual, expected["first3_float"])
+        ):
             if abs(actual - exp) > 1e-15:
-                mismatches.append(
-                    f"first3_float[{index}] expected {exp} got {actual}"
-                )
+                mismatches.append(f"first3_float[{index}] expected {exp} got {actual}")
 
         rng_int = RNG()
         rng_int.set_seeds(case["seed_a"], case["seed_b"])
