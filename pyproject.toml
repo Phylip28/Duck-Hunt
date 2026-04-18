@@ -16,7 +16,7 @@ packages = ["src/duck_hunt"]
 [tool.hatch.build.targets.sdist]
 include = [
   "src/duck_hunt",
-  "tests/rng",
+  "tests",
   "docs/RNG_CONTRACT.md",
   "README.md",
 ]
