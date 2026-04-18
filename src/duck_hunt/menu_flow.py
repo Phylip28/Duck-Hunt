@@ -81,7 +81,9 @@ class MenuFlow:
 
         return rows
 
-    def show_game_over(self, final_score: int, final_round: int, map_index: int = 0) -> None:
+    def show_game_over(
+        self, final_score: int, final_round: int, map_index: int = 0
+    ) -> None:
         self.current_screen = self.GAME_OVER_SCREEN
         self.final_score = int(final_score)
         self.final_round = int(final_round)

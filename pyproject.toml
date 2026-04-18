@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.scripts]
+duck-hunt-cli = "duck_hunt.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/duck_hunt"]
 

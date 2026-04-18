@@ -5,8 +5,8 @@ import tempfile
 import unittest
 
 from duck_hunt.config import Config
-from duck_hunt.session import Session
 from duck_hunt.rng import RNG
+from duck_hunt.session import Session
 from duck_hunt.storage import Storage
 
 
@@ -38,7 +38,9 @@ class TestSession(unittest.TestCase):
         result = self.session.miss_current_creature()
 
         self.assertEqual(result.result, "game_over")
-        self.assertEqual(self.session.menu.current_screen, self.session.menu.GAME_OVER_SCREEN)
+        self.assertEqual(
+            self.session.menu.current_screen, self.session.menu.GAME_OVER_SCREEN
+        )
 
         rankings = self.storage.get_rankings()
         self.assertEqual(len(rankings), 1)
