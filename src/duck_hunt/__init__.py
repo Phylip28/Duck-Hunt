@@ -4,7 +4,10 @@ from .command_adapter import CommandAdapter
 from .config import Config
 from .game_state import GameState, ShotResult
 from .menu_flow import MenuFlow, RankingRow
+from .parity_tools import ParityCaseResult, ParityChecker
+from .planner import DeterministicPlanner, GamePlan, RoundPlan
 from .rng import RNG
+from .rng_tools import RNGPreview, SeedContext, preview_sequence
 from .runtime import GameRuntime, RuntimeEvent
 from .session import Session
 from .storage import RankingEntry, Storage
@@ -29,4 +32,12 @@ __all__ = [
     "ScheduledAction",
     "TelemetryLog",
     "TelemetryEvent",
+    "SeedContext",
+    "RNGPreview",
+    "preview_sequence",
+    "DeterministicPlanner",
+    "RoundPlan",
+    "GamePlan",
+    "ParityChecker",
+    "ParityCaseResult",
 ]

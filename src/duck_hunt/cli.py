@@ -23,7 +23,10 @@ def main() -> None:
     print("Duck Hunt CLI (migration mode)")
     print(
         "Commands: start <name> <seed_a> <seed_b> | "
-        "hit | miss | status | tick <ms> | telemetry [limit] | quit"
+        "hit | miss | status | tick <ms> | telemetry [limit] | "
+        "rng-seq <seed_a> <seed_b> <length> [round map session_nonce mode version] | "
+        "plan <seed_a> <seed_b> <rounds> [creatures_per_round] | "
+        "parity-check | quit"
     )
 
     while True:
