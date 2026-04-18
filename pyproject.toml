@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "duck-hunt"
+version = "0.1.0"
+description = "Duck Hunt gradual migration to Python"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/duck_hunt"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/duck_hunt",
+  "tests/rng",
+  "docs/RNG_CONTRACT.md",
+  "README.md",
+]

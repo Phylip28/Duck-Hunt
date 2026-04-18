@@ -22,12 +22,17 @@
   - `src/js/menu.js`: menu/rankings/game-over/player-name flows.
   - `src/js/game.js`: game loop, entities, score, HUD updates.
   - `src/js/main.js`: intro flow and global audio bootstrap.
+  - `src/duck_hunt/rng.py`: deterministic RNG contract mirrored with JS.
+  - `src/duck_hunt/config.py`: Python config foundations driven by RNG.
 
 ## Build and Test
 
-- No build system or package manager scripts; this is vanilla HTML/CSS/JS.
-- Run by opening `index.html` in a browser.
-- Validate changes with manual gameplay checks (menu flow, score updates, round progression, rankings save/load, audio behavior after user interaction).
+- Web build remains vanilla HTML/CSS/JS. Run by opening `index.html` in a browser.
+- Python environment and dependencies are managed with `uv`.
+- Common Python commands:
+  - `uv sync`
+  - `uv run python -m unittest tests.rng.test_rng_parity`
+- Validate web changes with manual gameplay checks (menu flow, score updates, round progression, rankings save/load, audio behavior after user interaction).
 
 ## Migration Strategy (Python)
 
