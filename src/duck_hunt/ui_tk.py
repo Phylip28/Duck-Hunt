@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 try:
+    from PIL import Image, ImageSequence
+except ModuleNotFoundError:  # pragma: no cover - optional at import time
+    Image = None
+    ImageSequence = None
+
+try:
     import pygame
 except ModuleNotFoundError as exc:  # pragma: no cover - runtime dependency
     raise SystemExit("pygame is required. Run: uv sync") from exc
@@ -100,7 +106,10 @@ class DuckHuntTkApp:
 
         self.repo_root = Path(__file__).resolve().parents[2]
         self.background_cache = self._load_background_cache()
+        self.menu_background = self._load_menu_background()
+        self.creature_frames = self._load_creature_frames()
         self.target_surface = self._load_target_surface()
+        self.scanline_overlay = self._build_scanline_overlay()
 
         self.title_font = self._load_font(54)
         self.hud_font = self._load_font(28)
@@ -123,6 +132,7 @@ class DuckHuntTkApp:
         }
         self.input_order = ["name", "seed_a", "seed_b"]
         self.active_input = 0
+        self.menu_pulse = 0.0
 
     def _load_font(self, size: int) -> pygame.font.Font:
         font_path = self.repo_root / self.config.fonts["game_font"]
@@ -148,15 +158,143 @@ class DuckHuntTkApp:
             )
         return cache
 
-    def _load_target_surface(self) -> pygame.Surface | None:
-        target_path = self.repo_root / self.config.images["target"]
-        if not target_path.exists():
+    def _load_menu_background(self) -> pygame.Surface | None:
+        bg_path = self.repo_root / "assets/images/bg-menu.jpg"
+        if not bg_path.exists():
             return None
         try:
-            image = pygame.image.load(str(target_path)).convert_alpha()
+            image = pygame.image.load(str(bg_path)).convert()
         except pygame.error:
             return None
-        return pygame.transform.smoothscale(image, (42, 42))
+        return pygame.transform.smoothscale(image, (WINDOW_WIDTH, WINDOW_HEIGHT))
+
+    def _load_creature_frames(self) -> dict[str, dict[str, pygame.Surface]]:
+        frames: dict[str, dict[str, list[pygame.Surface]]] = {}
+        base_dir = self.repo_root / "assets/images"
+
+        for creature_name, spec in self.config.creature_types.items():
+            image_names = getattr(self.config, spec.image_names_key, None)
+            if not isinstance(image_names, list) or len(image_names) < 2:
+                continue
+
+            left_name = image_names[0]
+            right_name = image_names[1]
+
+            left_path = base_dir / left_name
+            right_path = base_dir / right_name
+
+            left_frames = self._load_animation_frames(left_path)
+            right_frames = self._load_animation_frames(right_path)
+
+            if not left_frames and not right_frames:
+                continue
+
+            if not left_frames and right_frames:
+                left_frames = [
+                    pygame.transform.flip(surface, True, False)
+                    for surface in right_frames
+                ]
+            if not right_frames and left_frames:
+                right_frames = [
+                    pygame.transform.flip(surface, True, False)
+                    for surface in left_frames
+                ]
+
+            if not left_frames or not right_frames:
+                continue
+
+            target_size = (spec.width, spec.height)
+            frames[creature_name] = {
+                "left": [
+                    pygame.transform.smoothscale(surface, target_size)
+                    for surface in left_frames
+                ],
+                "right": [
+                    pygame.transform.smoothscale(surface, target_size)
+                    for surface in right_frames
+                ],
+            }
+
+        return frames
+
+    def _load_animation_frames(self, path: Path) -> list[pygame.Surface]:
+        if not path.exists():
+            return []
+
+        if (
+            Image is not None
+            and ImageSequence is not None
+            and path.suffix.lower() == ".gif"
+        ):
+            try:
+                frames: list[pygame.Surface] = []
+                with Image.open(path) as image:
+                    for frame in ImageSequence.Iterator(image):
+                        rgba = frame.convert("RGBA")
+                        surface = pygame.image.fromstring(
+                            rgba.tobytes(), rgba.size, "RGBA"
+                        ).convert_alpha()
+                        frames.append(surface)
+                if frames:
+                    return frames
+            except Exception:
+                pass
+
+        static_surface = self._load_surface(path)
+        if static_surface is None:
+            return []
+        return [static_surface]
+
+    @staticmethod
+    def _load_surface(path: Path) -> pygame.Surface | None:
+        if not path.exists():
+            return None
+        try:
+            return pygame.image.load(str(path)).convert_alpha()
+        except pygame.error:
+            return None
+
+    def _load_target_surface(self) -> pygame.Surface | None:
+        candidates = [
+            self.repo_root / "assets/images/targeti.png",
+            self.repo_root / self.config.images["target"],
+        ]
+
+        image: pygame.Surface | None = None
+        for path in candidates:
+            image = self._load_surface(path)
+            if image is not None:
+                break
+
+        if image is None:
+            return None
+
+        scaled = pygame.transform.smoothscale(image, (44, 44))
+
+        white = scaled.copy()
+        white.fill((255, 255, 255, 0), special_flags=pygame.BLEND_RGBA_MAX)
+
+        outline = white.copy()
+        outline.fill((12, 12, 12, 255), special_flags=pygame.BLEND_RGBA_MULT)
+
+        result = pygame.Surface((52, 52), pygame.SRCALPHA)
+        for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            result.blit(outline, (4 + dx, 4 + dy))
+        result.blit(white, (4, 4))
+        return result
+
+    def _build_scanline_overlay(self) -> pygame.Surface:
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        for y in range(0, WINDOW_HEIGHT, 4):
+            pygame.draw.line(overlay, (0, 0, 0, 28), (0, y), (WINDOW_WIDTH, y), 1)
+        return overlay
+
+    def _top_score_text(self) -> str:
+        rows = self.session.menu.get_rankings_view(limit=1)
+        if not rows:
+            return "TOP SCORE: 00000"
+        top = rows[0]
+        return f"TOP SCORE: {top.score:05d} - {top.player_name}"
 
     def run(self) -> None:
         while self.running:
@@ -213,6 +351,14 @@ class DuckHuntTkApp:
             return
 
         if event.key == pygame.K_TAB:
+            self.active_input = (self.active_input + 1) % len(self.input_order)
+            return
+
+        if event.key == pygame.K_UP:
+            self.active_input = (self.active_input - 1) % len(self.input_order)
+            return
+
+        if event.key == pygame.K_DOWN:
             self.active_input = (self.active_input + 1) % len(self.input_order)
             return
 
@@ -381,6 +527,8 @@ class DuckHuntTkApp:
             self.session.stop_game_and_return_to_menu()
 
     def _update(self, dt: float, dt_ms: int) -> None:
+        self.menu_pulse += dt
+
         if self.banner_timer > 0.0:
             self.banner_timer = max(0.0, self.banner_timer - dt)
 
@@ -411,12 +559,31 @@ class DuckHuntTkApp:
         pygame.display.flip()
 
     def _draw_menu(self) -> None:
-        self.screen.fill((12, 20, 30))
+        if self.menu_background is not None:
+            self.screen.blit(self.menu_background, (0, 0))
+            veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            veil.fill((8, 12, 18, 132))
+            self.screen.blit(veil, (0, 0))
+        else:
+            self.screen.fill((12, 20, 30))
+
+        glow_alpha = int(75 + (math.sin(self.menu_pulse * 2.8) * 25))
+        glow = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        glow.fill((255, 194, 78, max(0, glow_alpha)))
+        self.screen.blit(glow, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
         self._draw_title_block("DUCK HUNT", "Python Migration - Pygame Edition")
 
+        top_score_surface = self.small_font.render(
+            self._top_score_text(),
+            True,
+            (248, 232, 164),
+        )
+        self.screen.blit(top_score_surface, (132, 174))
+
         box = pygame.Rect(130, 220, 1020, 360)
-        pygame.draw.rect(self.screen, (16, 28, 44), box, border_radius=12)
-        pygame.draw.rect(self.screen, (220, 183, 91), box, 3, border_radius=12)
+        pygame.draw.rect(self.screen, (20, 33, 47), box, border_radius=12)
+        pygame.draw.rect(self.screen, (220, 183, 91), box, 4, border_radius=12)
 
         self._draw_input_field("Player", "name", 260)
         self._draw_input_field("Seed A", "seed_a", 330)
@@ -434,6 +601,7 @@ class DuckHuntTkApp:
 
         msg = self.small_font.render(self.last_message, True, (255, 230, 144))
         self.screen.blit(msg, (170, 596))
+        self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_input_field(self, label: str, key: str, top: int) -> None:
         selected = self.input_order[self.active_input] == key
@@ -474,6 +642,7 @@ class DuckHuntTkApp:
 
         hint = self.small_font.render("ENTER or ESC: Back", True, (188, 214, 244))
         self.screen.blit(hint, (190, 610))
+        self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_playing(self) -> None:
         self._draw_map_background()
@@ -501,6 +670,8 @@ class DuckHuntTkApp:
             flash = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
             flash.fill((255, 115, 115, int(95 * (self.miss_flash / 0.12))))
             self.screen.blit(flash, (0, 0))
+
+        self.screen.blit(self.scanline_overlay, (0, 0))
 
         mouse_pos = pygame.mouse.get_pos()
         self._draw_crosshair(mouse_pos)
@@ -543,6 +714,7 @@ class DuckHuntTkApp:
             "ENTER or ESC to return to menu", True, (224, 224, 224)
         )
         self.screen.blit(hint, (WINDOW_WIDTH // 2 - hint.get_width() // 2, 540))
+        self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_map_background(self) -> None:
         map_name = str(self.runtime.status().get("current_map", "---"))
@@ -612,6 +784,18 @@ class DuckHuntTkApp:
 
     def _draw_creature(self, creature: CreatureSprite) -> None:
         rect = creature.rect()
+        sprite_set = self.creature_frames.get(creature.kind)
+        if sprite_set:
+            direction = "right" if creature.vx >= 0 else "left"
+            sprite_frames = sprite_set.get(direction, [])
+            if sprite_frames:
+                frame_index = int((creature.age * 11.0) % len(sprite_frames))
+                sprite = sprite_frames[frame_index]
+                bob = int(math.sin((creature.age * 12.0) + creature.phase) * 4)
+                sprite_rect = sprite.get_rect(center=(rect.centerx, rect.centery + bob))
+                self.screen.blit(sprite, sprite_rect)
+                return
+
         center = rect.center
 
         palettes = {
@@ -663,7 +847,11 @@ class DuckHuntTkApp:
             self.screen.blit(self.target_surface, target_rect)
             return
 
-        color = (242, 92, 92)
+        outline = (14, 14, 14)
+        color = (255, 255, 255)
+        pygame.draw.circle(self.screen, outline, (x, y), 21, 3)
+        pygame.draw.line(self.screen, outline, (x - 28, y), (x + 28, y), 4)
+        pygame.draw.line(self.screen, outline, (x, y - 28), (x, y + 28), 4)
         pygame.draw.circle(self.screen, color, (x, y), 20, 2)
         pygame.draw.line(self.screen, color, (x - 28, y), (x + 28, y), 2)
         pygame.draw.line(self.screen, color, (x, y - 28), (x, y + 28), 2)

@@ -9,6 +9,7 @@ description = "Duck Hunt gradual migration to Python"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "Pillow>=10.0.0",
   "pygame>=2.6.0",
 ]
 
