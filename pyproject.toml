@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "duck-hunt"
+version = "0.1.0"
+description = "Duck Hunt gradual migration to Python"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "Pillow>=10.0.0",
+  "pygame>=2.6.0",
+]
+
+[project.scripts]
+duck-hunt-cli = "duck_hunt.cli:main"
+duck-hunt-ui = "duck_hunt.ui_tk:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/duck_hunt"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/duck_hunt",
+  "tests",
+  "docs/RNG_CONTRACT.md",
+  "README.md",
+]

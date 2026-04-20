@@ -90,6 +90,16 @@ duck-hunt-master/
 - **JavaScript Vanilla**: Sin dependencias externas
 - **LocalStorage**: Persistencia de datos
 
+## 🐍 Migración Python (uv)
+
+- La migración gradual a Python usa `uv` como gestor de entorno/dependencias.
+- Estructura Python actual:
+  - `src/duck_hunt/rng.py`
+  - `src/duck_hunt/config.py`
+- Comandos base:
+  1. `uv sync`
+  2. `uv run python -m unittest tests.rng.test_rng_parity`
+
 ## 📝 Notas
 
 - El juego utiliza recursos gráficos de alta calidad
