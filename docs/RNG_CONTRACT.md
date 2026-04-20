@@ -1,6 +1,6 @@
 # RNG Contract v1 (JS <-> Python)
 
-## 1) Purpose
+## 1 Purpose
 This contract defines a deterministic RNG module that can be mirrored in JavaScript and Python with parity guarantees.
 
 Primary goals:
@@ -12,7 +12,7 @@ Out of scope:
 - Computer vision integration.
 - Replacing gameplay logic in this phase.
 
-## 2) Public API (must match in JS and Python)
+## 2 Public API (must match in JS and Python)
 
 Required methods:
 - set_seeds(seed_a, seed_b)
@@ -28,7 +28,7 @@ Behavior summary:
 - next_float(): returns next double in [0.0, 1.0), computed as next_u32() / 2^32.
 - randint(min, max): returns integer in inclusive range [min, max], unbiased (rejection sampling).
 
-## 3) Data Types and Normalization
+## 3 Data Types and Normalization
 
 ### 3.1 u32 normalization
 All internal arithmetic must be modulo 2^32.
@@ -44,7 +44,7 @@ Language mapping:
 - JS: throw TypeError for non-integer input.
 - Python: raise TypeError for non-integer input.
 
-## 4) Context Schema for derive_seed_c(context)
+## 4 Context Schema for derive_seed_c(context)
 
 Context is a dictionary/object with optional u32 fields:
 - version (default 1)
@@ -56,7 +56,7 @@ Context is a dictionary/object with optional u32 fields:
 All missing fields use defaults above.
 All provided fields are normalized with to_u32.
 
-## 5) Normative Algorithms
+## 5 Normative Algorithms
 
 ## 5.1 rotl32
 rotl32(x, r): left rotate u32 x by r bits.
@@ -119,7 +119,7 @@ Unbiased algorithm:
 4) repeat r = next_u32() while r >= limit
 5) return min + (r mod span)
 
-## 6) Edge Cases and Expected Results
+## 6 Edge Cases and Expected Results
 
 ### 6.1 Seed edge cases
 - seed_a = 0 and seed_b = 0: valid; fallback protection must still avoid all-zero stream.
@@ -140,7 +140,7 @@ Unbiased algorithm:
 - Same normalized seed_a, seed_b, and context => same seed_c and same sequence.
 - Any change in seed or context field must change the sequence (avalanche expected, not cryptographic).
 
-## 7) Parity Test Specification
+## 7 Parity Test Specification
 
 ## 7.1 Canonical vectors
 Use file:
@@ -184,7 +184,7 @@ A build is parity-compliant only if:
 - No mismatch in any canonical vector.
 - Any algorithm change requires contract version bump and new vectors.
 
-## 8) Versioning Policy
+## 8 Versioning Policy
 - Contract starts at v1.
 - Any change to normalization, derive order, generator core, or randint bias logic is a breaking change.
 - Breaking changes require:

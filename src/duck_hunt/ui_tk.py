@@ -109,6 +109,8 @@ class DuckHuntTkApp:
         self.menu_background = self._load_menu_background()
         self.menu_blood_layers = self._load_menu_blood_layers()
         self.dog_hunter_surface = self._load_dog_hunter_surface()
+        self.name_entry_illustration = self._load_name_entry_illustration()
+        self.map_preview_cache = self._build_map_preview_cache()
         self.creature_frames = self._load_creature_frames()
         self.target_surface = self._load_target_surface()
         self.scanline_overlay = self._build_scanline_overlay()
@@ -133,8 +135,6 @@ class DuckHuntTkApp:
         self.menu_selected_index = 0
         self.menu_option_rects: dict[str, pygame.Rect] = {}
 
-        self.seed_selector_open = False
-        self.seed_option_rects: list[tuple[pygame.Rect, int]] = []
         self.selected_seed_index = 0
         self.seed_presets = [
             ("Clasica", "123456789", "362436069"),
@@ -148,6 +148,19 @@ class DuckHuntTkApp:
         self.name_back_rect = pygame.Rect(0, 0, 0, 0)
         self.instructions_back_rect = pygame.Rect(0, 0, 0, 0)
         self.rankings_back_rect = pygame.Rect(0, 0, 0, 0)
+
+        self.pending_player_name = ""
+        self.pending_seed_a = 0
+        self.pending_seed_b = 0
+        self.selected_map_index = 0
+        self.map_selector_rng = RNG()
+        self.map_carousel_running = False
+        self.map_carousel_position = 0.0
+        self.map_carousel_start_pos = 0.0
+        self.map_carousel_end_pos = 0.0
+        self.map_carousel_target_index = 0
+        self.map_carousel_elapsed_ms = 0
+        self.map_carousel_duration_ms = 0
 
     def _load_font(self, size: int) -> pygame.font.Font:
         font_path = self.repo_root / self.config.fonts["game_font"]
@@ -205,6 +218,36 @@ class DuckHuntTkApp:
             if surface is not None:
                 return surface
         return None
+
+    def _load_name_entry_illustration(self) -> pygame.Surface | None:
+        candidates = [
+            self.repo_root / "assets/images/name_screeen.jpeg",
+            self.repo_root / "assets/images/ilustracion.png",
+        ]
+        for path in candidates:
+            image = self._load_surface(path)
+            if image is not None:
+                return image
+        return None
+
+    def _build_map_preview_cache(self) -> dict[int, pygame.Surface]:
+        previews: dict[int, pygame.Surface] = {}
+        card_size = (360, 202)
+
+        for idx, game_map in enumerate(self.config.maps):
+            bg = self.background_cache.get(game_map.name)
+            if bg is not None:
+                card = pygame.transform.smoothscale(bg, card_size)
+            else:
+                card = pygame.Surface(card_size)
+                card.fill((58, 26, 28))
+
+            shade = pygame.Surface(card_size, pygame.SRCALPHA)
+            shade.fill((12, 4, 6, 36))
+            card.blit(shade, (0, 0))
+            previews[idx] = card
+
+        return previews
 
     def _load_creature_frames(self) -> dict[str, dict[str, list[pygame.Surface]]]:
         frames: dict[str, dict[str, list[pygame.Surface]]] = {}
@@ -360,6 +403,8 @@ class DuckHuntTkApp:
                     self._on_menu_click(event.pos)
                 elif self.state == "name_entry":
                     self._on_name_entry_click(event.pos)
+                elif self.state == "map_selector":
+                    self._on_map_selector_click(event.pos)
                 elif self.state == "instructions":
                     self._on_instructions_click(event.pos)
                 elif self.state == "rankings":
@@ -378,6 +423,10 @@ class DuckHuntTkApp:
             self._on_name_entry_keydown(event)
             return
 
+        if self.state == "map_selector":
+            self._on_map_selector_keydown(event)
+            return
+
         if self.state == "instructions":
             if event.key in {pygame.K_RETURN, pygame.K_ESCAPE}:
                 self._go_to_menu()
@@ -394,26 +443,6 @@ class DuckHuntTkApp:
             return
 
     def _on_menu_keydown(self, event: pygame.event.Event) -> None:
-        if self.seed_selector_open:
-            if event.key in {pygame.K_UP, pygame.K_LEFT}:
-                self.selected_seed_index = (self.selected_seed_index - 1) % len(
-                    self.seed_presets
-                )
-                return
-
-            if event.key in {pygame.K_DOWN, pygame.K_RIGHT, pygame.K_TAB}:
-                self.selected_seed_index = (self.selected_seed_index + 1) % len(
-                    self.seed_presets
-                )
-                return
-
-            if event.key in {pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE}:
-                self.seed_selector_open = False
-                self.last_message = ""
-                return
-
-            return
-
         if event.key == pygame.K_ESCAPE:
             self.running = False
             return
@@ -436,31 +465,43 @@ class DuckHuntTkApp:
             )
             return
 
+        current_option = self.menu_option_order[self.menu_selected_index]
+        if current_option == "seed" and event.key == pygame.K_LEFT:
+            self.selected_seed_index = (self.selected_seed_index - 1) % len(
+                self.seed_presets
+            )
+            return
+
+        if current_option == "seed" and event.key == pygame.K_RIGHT:
+            self.selected_seed_index = (self.selected_seed_index + 1) % len(
+                self.seed_presets
+            )
+            return
+
         if event.key == pygame.K_RETURN:
             self._activate_menu_option(self.menu_option_order[self.menu_selected_index])
 
     def _activate_menu_option(self, option_id: str) -> None:
         if option_id == "play":
             self.state = "name_entry"
-            self.seed_selector_open = False
             self.last_message = "Ingresa tu nombre para comenzar"
             return
 
         if option_id == "instructions":
             self.state = "instructions"
-            self.seed_selector_open = False
             self.last_message = "Instrucciones"
             return
 
         if option_id == "rankings":
             self.state = "rankings"
-            self.seed_selector_open = False
             self.last_message = "Rankings"
             return
 
         if option_id == "seed":
-            self.seed_selector_open = not self.seed_selector_open
-            self.menu_selected_index = self.menu_option_order.index("seed")
+            self.selected_seed_index = (self.selected_seed_index + 1) % len(
+                self.seed_presets
+            )
+            self.last_message = ""
             return
 
     def _on_name_entry_keydown(self, event: pygame.event.Event) -> None:
@@ -481,12 +522,10 @@ class DuckHuntTkApp:
             self.player_name_input += char
 
     def _on_name_entry_click(self, mouse_pos: tuple[int, int]) -> None:
-        if self.name_confirm_rect.collidepoint(mouse_pos):
-            self._start_game_with_name()
-            return
+        del mouse_pos
 
-        if self.name_back_rect.collidepoint(mouse_pos):
-            self._go_to_menu()
+    def _on_map_selector_click(self, mouse_pos: tuple[int, int]) -> None:
+        del mouse_pos
 
     def _on_instructions_click(self, mouse_pos: tuple[int, int]) -> None:
         if self.instructions_back_rect.collidepoint(mouse_pos):
@@ -496,17 +535,39 @@ class DuckHuntTkApp:
         if self.rankings_back_rect.collidepoint(mouse_pos):
             self._go_to_menu()
 
-    def _on_menu_click(self, mouse_pos: tuple[int, int]) -> None:
-        if self.seed_selector_open:
-            for rect, preset_index in self.seed_option_rects:
-                if rect.collidepoint(mouse_pos):
-                    self.selected_seed_index = preset_index
-                    self.seed_selector_open = False
-                    self.last_message = ""
-                    return
-
+    def _on_map_selector_keydown(self, event: pygame.event.Event) -> None:
+        if event.key == pygame.K_ESCAPE:
+            self.state = "name_entry"
+            self.map_carousel_running = False
             return
 
+        if self.map_carousel_running:
+            if event.key == pygame.K_SPACE:
+                self._start_map_roulette()
+            return
+
+        if event.key in {pygame.K_LEFT, pygame.K_UP}:
+            self.selected_map_index = (self.selected_map_index - 1) % len(
+                self.config.maps
+            )
+            self.map_carousel_position = float(self.selected_map_index)
+            return
+
+        if event.key in {pygame.K_RIGHT, pygame.K_DOWN, pygame.K_TAB}:
+            self.selected_map_index = (self.selected_map_index + 1) % len(
+                self.config.maps
+            )
+            self.map_carousel_position = float(self.selected_map_index)
+            return
+
+        if event.key == pygame.K_SPACE:
+            self._start_map_roulette()
+            return
+
+        if event.key == pygame.K_RETURN:
+            self._start_game_from_map_selector()
+
+    def _on_menu_click(self, mouse_pos: tuple[int, int]) -> None:
         for idx, option_id in enumerate(self.menu_option_order):
             rect = self.menu_option_rects.get(option_id)
             if rect and rect.collidepoint(mouse_pos):
@@ -528,19 +589,69 @@ class DuckHuntTkApp:
             self.last_message = "La semilla seleccionada es invalida"
             return
 
+        self.pending_player_name = player_name
+        self.pending_seed_a = seed_a
+        self.pending_seed_b = seed_b
+
+        self._enter_map_selector()
+
+    def _enter_map_selector(self) -> None:
+        self.state = "map_selector"
+        self.map_carousel_running = False
+        self.map_carousel_elapsed_ms = 0
+
         context = {
             "version": 1,
-            "session_nonce": 0,
+            "session_nonce": len(self.pending_player_name),
+            "round": 0,
+            "map_index": self.selected_map_index,
+            "mode": 2,
+        }
+        self.map_selector_rng.set_seeds(self.pending_seed_a, self.pending_seed_b)
+        self.map_selector_rng.derive_seed_c(context)
+        self.selected_map_index = self.map_selector_rng.randint(
+            0, len(self.config.maps) - 1
+        )
+        self.map_carousel_position = float(self.selected_map_index)
+        self._start_map_roulette()
+        self.last_message = ""
+
+    def _start_map_roulette(self) -> None:
+        total_maps = len(self.config.maps)
+        if total_maps <= 0:
+            self.map_carousel_running = False
+            return
+
+        self.map_carousel_target_index = self.map_selector_rng.randint(
+            0, total_maps - 1
+        )
+        extra_loops = self.map_selector_rng.randint(3, 5)
+
+        start_pos = self.map_carousel_position
+        start_mod = start_pos % total_maps
+        delta_to_target = (self.map_carousel_target_index - start_mod) % total_maps
+        total_delta = (extra_loops * total_maps) + delta_to_target
+
+        self.map_carousel_start_pos = start_pos
+        self.map_carousel_end_pos = start_pos + total_delta
+        self.map_carousel_elapsed_ms = 0
+        self.map_carousel_duration_ms = self.map_selector_rng.randint(2400, 3400)
+        self.map_carousel_running = True
+
+    def _start_game_from_map_selector(self) -> None:
+        context = {
+            "version": 1,
+            "session_nonce": len(self.pending_player_name),
             "round": 1,
-            "map_index": 0,
+            "map_index": self.selected_map_index,
             "mode": 1,
         }
 
         try:
             events = self.runtime.start(
-                player_name=player_name,
-                seed_a=seed_a,
-                seed_b=seed_b,
+                player_name=self.pending_player_name,
+                seed_a=self.pending_seed_a,
+                seed_b=self.pending_seed_b,
                 context=context,
             )
         except Exception as exc:
@@ -553,7 +664,6 @@ class DuckHuntTkApp:
         self.banner_timer = 0.0
         self.hit_flash = 0.0
         self.miss_flash = 0.0
-        self.seed_selector_open = False
         pygame.mouse.set_visible(False)
         self._process_runtime_events(events)
 
@@ -659,7 +769,6 @@ class DuckHuntTkApp:
         self.current_creature = None
         self.banner_text = ""
         self.banner_timer = 0.0
-        self.seed_selector_open = False
         self.last_message = message or ""
         pygame.mouse.set_visible(True)
 
@@ -668,6 +777,22 @@ class DuckHuntTkApp:
 
     def _update(self, dt: float, dt_ms: int) -> None:
         self.menu_pulse += dt
+
+        if self.state == "map_selector" and self.map_carousel_running:
+            self.map_carousel_elapsed_ms += dt_ms
+
+            progress = min(
+                1.0, self.map_carousel_elapsed_ms / self.map_carousel_duration_ms
+            )
+            eased = 1.0 - ((1.0 - progress) ** 3)
+            self.map_carousel_position = self.map_carousel_start_pos + (
+                (self.map_carousel_end_pos - self.map_carousel_start_pos) * eased
+            )
+
+            if progress >= 1.0:
+                self.map_carousel_running = False
+                self.selected_map_index = self.map_carousel_target_index
+                self.map_carousel_position = float(self.selected_map_index)
 
         if self.banner_timer > 0.0:
             self.banner_timer = max(0.0, self.banner_timer - dt)
@@ -691,6 +816,8 @@ class DuckHuntTkApp:
             self._draw_menu()
         elif self.state == "name_entry":
             self._draw_name_entry()
+        elif self.state == "map_selector":
+            self._draw_map_selector()
         elif self.state == "instructions":
             self._draw_instructions()
         elif self.state == "rankings":
@@ -703,7 +830,6 @@ class DuckHuntTkApp:
         pygame.display.flip()
 
     def _draw_menu(self) -> None:
-        self.seed_option_rects = []
         self.menu_option_rects = {}
 
         if self.menu_background is not None:
@@ -731,9 +857,6 @@ class DuckHuntTkApp:
 
         self._draw_menu_options()
 
-        if self.seed_selector_open:
-            self._draw_seed_selector()
-
         top_score_surface = self.small_font.render(
             self._top_score_text(),
             True,
@@ -752,8 +875,8 @@ class DuckHuntTkApp:
             ("rankings", "Rankings", (WINDOW_WIDTH // 2, 352)),
             (
                 "seed",
-                f"Seleccionar semilla: {self.seed_presets[self.selected_seed_index][0]}",
-                (32, WINDOW_HEIGHT - 74),
+                f"Seleccionar generador: {self.seed_presets[self.selected_seed_index][0]}",
+                (32, WINDOW_HEIGHT - 34),
             ),
         ]
 
@@ -796,38 +919,6 @@ class DuckHuntTkApp:
 
             self.menu_option_rects[option_id] = rect
 
-    def _draw_seed_selector(self) -> None:
-        title = self.small_font.render("Semillas", True, (255, 205, 190))
-        title_shadow = self.small_font.render("Semillas", True, (28, 8, 7))
-        origin_x = 20
-        origin_y = WINDOW_HEIGHT - 340
-
-        panel_rect = pygame.Rect(origin_x - 14, origin_y - 14, 268, 178)
-        pygame.draw.rect(self.screen, (18, 8, 10), panel_rect, border_radius=10)
-        pygame.draw.rect(self.screen, (178, 68, 59), panel_rect, 2, border_radius=10)
-
-        self.screen.blit(title_shadow, (origin_x + 2, origin_y + 2))
-        self.screen.blit(title, (origin_x, origin_y))
-
-        for idx, (name, seed_a, seed_b) in enumerate(self.seed_presets):
-            del seed_a, seed_b
-            option_text = name
-            option_color = (
-                (255, 233, 168) if idx == self.selected_seed_index else (253, 232, 188)
-            )
-            option_surface = self.small_font.render(option_text, True, option_color)
-            option_shadow = self.small_font.render(option_text, True, (34, 10, 10))
-            row_y = origin_y + 34 + (idx * 30)
-            self.screen.blit(option_shadow, (origin_x + 2, row_y + 2))
-            self.screen.blit(option_surface, (origin_x, row_y))
-            rect = pygame.Rect(
-                origin_x,
-                row_y,
-                option_surface.get_width(),
-                option_surface.get_height(),
-            )
-            self.seed_option_rects.append((rect, idx))
-
     def _draw_dog_hunter_backdrop(self, variant: str) -> None:
         if self.menu_background is not None:
             self.screen.blit(self.menu_background, (0, 0))
@@ -855,70 +946,123 @@ class DuckHuntTkApp:
             self.screen.blit(dog_shadow, (dog_pos[0] + 12, dog_pos[1] + 12))
             self.screen.blit(dog, dog_pos)
 
-        if variant == "instructions":
-            barrel = pygame.Rect(420, 372, 520, 28)
-            pygame.draw.rect(self.screen, (109, 114, 122), barrel, border_radius=8)
-            pygame.draw.rect(self.screen, (42, 46, 55), barrel, 2, border_radius=8)
-            stock = [
-                (388, 412),
-                (502, 414),
-                (526, 444),
-                (448, 468),
-                (372, 448),
-            ]
-            pygame.draw.polygon(self.screen, (96, 57, 42), stock)
-            pygame.draw.polygon(self.screen, (45, 21, 16), stock, 2)
-        else:
-            fist_center = (792, 362)
-            for idx, offset in enumerate([-66, -22, 22, 66]):
-                knuckle = (fist_center[0] + offset, fist_center[1] - 58)
-                pygame.draw.circle(self.screen, (132, 137, 145), knuckle, 24)
-                pygame.draw.circle(self.screen, (62, 67, 76), knuckle, 2)
-                if idx in {1, 2}:
-                    pygame.draw.circle(self.screen, (164, 169, 176), knuckle, 10)
-
-            fist_rect = pygame.Rect(fist_center[0] - 126, fist_center[1] - 44, 252, 118)
-            pygame.draw.rect(self.screen, (96, 102, 112), fist_rect, border_radius=18)
-            pygame.draw.rect(self.screen, (54, 59, 67), fist_rect, 2, border_radius=18)
-
-            plate_rect = pygame.Rect(696, 336, 298, 76)
-            pygame.draw.rect(self.screen, (34, 36, 42), plate_rect, border_radius=12)
-            pygame.draw.rect(
-                self.screen, (126, 131, 141), plate_rect, 2, border_radius=12
-            )
-
-            for rivet_x in [710, 734, 956, 980]:
-                pygame.draw.circle(self.screen, (160, 165, 173), (rivet_x, 348), 4)
-                pygame.draw.circle(self.screen, (160, 165, 173), (rivet_x, 399), 4)
-
     def _draw_name_entry(self) -> None:
-        self._draw_dog_hunter_backdrop(variant="name")
-
-        self._draw_title_block("JUGAR")
-
-        prompt = self.body_font.render("Escribe tu nombre", True, (255, 225, 180))
-        self.screen.blit(prompt, prompt.get_rect(center=(845, 268)))
+        if self.name_entry_illustration is not None:
+            bg = pygame.transform.smoothscale(
+                self.name_entry_illustration,
+                (WINDOW_WIDTH, WINDOW_HEIGHT),
+            )
+            self.screen.blit(bg, (0, 0))
+        else:
+            self._draw_dog_hunter_backdrop(variant="name")
 
         player_text = self.player_name_input or "_"
-        name_surface = self.hud_font.render(player_text, True, (255, 245, 220))
-        name_shadow = self.hud_font.render(player_text, True, (9, 11, 16))
-        name_rect = name_surface.get_rect(center=(846, 373))
-        shadow_rect = name_shadow.get_rect(center=(848, 375))
+        name_surface = self.hud_font.render(player_text, True, (236, 225, 204))
+        name_shadow = self.hud_font.render(player_text, True, (18, 12, 10))
+        name_rect = name_surface.get_rect(center=(640, 362))
+        shadow_rect = name_shadow.get_rect(center=(642, 364))
         self.screen.blit(name_shadow, shadow_rect)
         self.screen.blit(name_surface, name_rect)
 
-        start_label = self.small_font.render("Comenzar", True, (255, 217, 167))
-        back_label = self.small_font.render("Regresar", True, (241, 192, 172))
-        self.screen.blit(start_label, start_label.get_rect(center=(848, 452)))
-        self.screen.blit(back_label, back_label.get_rect(center=(848, 488)))
+        hint = self.small_font.render(
+            "ENTER para continuar | ESC para volver", True, (222, 223, 214)
+        )
+        self.screen.blit(hint, hint.get_rect(center=(640, 574)))
+        self.screen.blit(self.scanline_overlay, (0, 0))
 
-        self.name_confirm_rect = start_label.get_rect(center=(848, 452))
-        self.name_back_rect = back_label.get_rect(center=(848, 488))
+    def _draw_map_selector(self) -> None:
+        map_count = len(self.config.maps)
+        if map_count == 0:
+            self.screen.fill((18, 10, 12))
+            empty = self.body_font.render(
+                "No hay mapas disponibles", True, (240, 219, 194)
+            )
+            self.screen.blit(
+                empty, empty.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
+            )
+            self.screen.blit(self.scanline_overlay, (0, 0))
+            return
+
+        center_map_index = int(round(self.map_carousel_position)) % map_count
+        selected_map = self.config.maps[center_map_index]
+
+        background = self.background_cache.get(selected_map.name)
+        if background is not None:
+            self.screen.blit(background, (0, 0))
+        else:
+            self._draw_fallback_background(selected_map.name)
+
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((8, 6, 10, 168))
+        self.screen.blit(overlay, (0, 0))
+
+        title = self.title_font.render("SELECCION DE MAPA", True, (245, 214, 146))
+        title_shadow = self.title_font.render("SELECCION DE MAPA", True, (35, 11, 9))
+        self.screen.blit(title_shadow, title_shadow.get_rect(center=(642, 98)))
+        self.screen.blit(title, title.get_rect(center=(640, 96)))
+
+        center_x = WINDOW_WIDTH // 2
+        center_y = 350
+        spacing = 290
+        base_index = int(math.floor(self.map_carousel_position))
+        frac = self.map_carousel_position - base_index
+
+        for slot in range(-4, 5):
+            virtual_index = base_index + slot
+            map_idx = virtual_index % map_count
+            rel = slot - frac
+            dist = abs(rel)
+            if dist > 4.6:
+                continue
+
+            scale = max(0.54, 1.0 - (dist * 0.16))
+            if dist < 0.35:
+                scale += 0.16 * (1.0 - (dist / 0.35))
+
+            alpha = max(65, 255 - int(dist * 95))
+            x = int(center_x + (rel * spacing))
+
+            card_base = self.map_preview_cache.get(map_idx)
+            if card_base is None:
+                continue
+
+            card_w = max(90, int(card_base.get_width() * scale))
+            card_h = max(60, int(card_base.get_height() * scale))
+            card = pygame.transform.smoothscale(
+                card_base, (card_w, card_h)
+            ).convert_alpha()
+            card.set_alpha(alpha)
+            card_rect = card.get_rect(center=(x, center_y))
+
+            if card_rect.right < -40 or card_rect.left > WINDOW_WIDTH + 40:
+                continue
+
+            self.screen.blit(card, card_rect)
+
+            border_color = (255, 219, 150) if dist < 0.5 else (152, 70, 60)
+            border_width = 3 if dist < 0.5 else 1
+            pygame.draw.rect(
+                self.screen, border_color, card_rect, border_width, border_radius=10
+            )
+
+        arrow = [
+            (center_x, 190),
+            (center_x - 18, 158),
+            (center_x + 18, 158),
+        ]
+        pygame.draw.polygon(self.screen, (255, 220, 149), arrow)
+        pygame.draw.polygon(self.screen, (86, 31, 28), arrow, 2)
+
+        map_surface = self.body_font.render(selected_map.name, True, (255, 231, 188))
+        self.screen.blit(map_surface, map_surface.get_rect(center=(640, 515)))
 
         hint = self.small_font.render(
-            "ENTER para iniciar | ESC para volver", True, (222, 223, 214)
+            "ENTER confirmar | ESPACIO relanzar | FLECHAS ajustar | ESC volver",
+            True,
+            (224, 224, 214),
         )
-        self.screen.blit(hint, hint.get_rect(center=(850, 538)))
+        self.screen.blit(hint, hint.get_rect(center=(640, 548)))
+
         self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_instructions(self) -> None:
@@ -930,7 +1074,7 @@ class DuckHuntTkApp:
             "1. Dispara con click izquierdo.",
             "2. Cada objetivo tiene 3 disparos maximo.",
             "3. Si se acaban los disparos, termina la partida.",
-            "4. Elige semilla en el menu para partidas reproducibles.",
+            "4. selecciona tu generador aleatorio favorito.",
         ]
         base_y = 236
         for index, line in enumerate(lines):
@@ -967,22 +1111,58 @@ class DuckHuntTkApp:
         pygame.draw.rect(self.screen, (20, 10, 12), panel, border_radius=12)
         pygame.draw.rect(self.screen, (178, 70, 60), panel, 3, border_radius=12)
 
-        header = self.small_font.render(
-            "POS   NOMBRE          PTS     RONDA   MAPA", True, (255, 226, 176)
+        col_x = {
+            "pos": 182,
+            "name": 260,
+            "pts": 520,
+            "round": 630,
+            "map": 742,
+        }
+
+        header_style = (255, 226, 176)
+        self.screen.blit(
+            self.small_font.render("POS", True, header_style), (col_x["pos"], 206)
         )
-        self.screen.blit(header, (170, 206))
+        self.screen.blit(
+            self.small_font.render("NOMBRE", True, header_style), (col_x["name"], 206)
+        )
+        self.screen.blit(
+            self.small_font.render("PTS", True, header_style), (col_x["pts"], 206)
+        )
+        self.screen.blit(
+            self.small_font.render("RONDA", True, header_style), (col_x["round"], 206)
+        )
+        self.screen.blit(
+            self.small_font.render("MAPA", True, header_style), (col_x["map"], 206)
+        )
 
         if not rows:
             empty = self.body_font.render("Aun no hay puntajes", True, (239, 224, 209))
             self.screen.blit(empty, (190, 258))
         else:
             for idx, row in enumerate(rows):
-                line = (
-                    f"{row.rank:>2}    {row.player_name:<12} "
-                    f"{row.score:>6}   R{row.round:<2}    {row.map_name}"
+                y = 246 + (idx * 36)
+                row_style = (239, 224, 209)
+                self.screen.blit(
+                    self.body_font.render(str(row.rank), True, row_style),
+                    (col_x["pos"], y),
                 )
-                surface = self.body_font.render(line, True, (239, 224, 209))
-                self.screen.blit(surface, (170, 246 + (idx * 36)))
+                self.screen.blit(
+                    self.body_font.render(row.player_name, True, row_style),
+                    (col_x["name"], y),
+                )
+                self.screen.blit(
+                    self.body_font.render(str(row.score), True, row_style),
+                    (col_x["pts"], y),
+                )
+                self.screen.blit(
+                    self.body_font.render(f"R{row.round}", True, row_style),
+                    (col_x["round"], y),
+                )
+                self.screen.blit(
+                    self.body_font.render(row.map_name, True, row_style),
+                    (col_x["map"], y),
+                )
 
         hint = self.small_font.render("Regresar", True, (255, 207, 182))
         self.rankings_back_rect = hint.get_rect(center=(WINDOW_WIDTH // 2, 612))

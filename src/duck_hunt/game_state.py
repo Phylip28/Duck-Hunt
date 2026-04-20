@@ -41,12 +41,26 @@ class GameState:
         self.rng.set_seeds(seed_a, seed_b)
         self.rng.derive_seed_c(context)
 
+        preferred_map_index: int | None = None
+        if isinstance(context, dict):
+            raw_map_index = context.get("map_index")
+            if isinstance(raw_map_index, int) and not isinstance(raw_map_index, bool):
+                if 0 <= raw_map_index < len(self.config.maps):
+                    preferred_map_index = raw_map_index
+
         self.current_round = 1
         self.total_score = 0
         self.duck_speed = self.config.initial_duck_speed
         self.game_active = True
 
         self.config.generate_random_map_queue(self.rng)
+        if preferred_map_index is not None:
+            remaining = [
+                index
+                for index in self.config.random_map_queue
+                if index != preferred_map_index
+            ]
+            self.config.random_map_queue = [preferred_map_index, *remaining]
         self._change_map_for_round()
         self._reset_round_counters()
 
