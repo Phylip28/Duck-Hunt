@@ -1,4 +1,4 @@
-"""Pygame gameplay UI for the Duck Hunt Python migration."""
+"""Pygame gameplay UI for Duck Hunt."""
 
 from __future__ import annotations
 
@@ -107,6 +107,7 @@ class DuckHuntTkApp:
         self.repo_root = Path(__file__).resolve().parents[2]
         self.background_cache = self._load_background_cache()
         self.menu_background = self._load_menu_background()
+        self.menu_blood_layers = self._load_menu_blood_layers()
         self.creature_frames = self._load_creature_frames()
         self.target_surface = self._load_target_surface()
         self.scanline_overlay = self._build_scanline_overlay()
@@ -117,7 +118,7 @@ class DuckHuntTkApp:
         self.small_font = self._load_font(18)
 
         self.state = "menu"
-        self.last_message = "Press ENTER to start"
+        self.last_message = "Selecciona una opcion"
         self.banner_text = ""
         self.banner_timer = 0.0
 
@@ -125,14 +126,27 @@ class DuckHuntTkApp:
         self.hit_flash = 0.0
         self.miss_flash = 0.0
 
-        self.input_fields = {
-            "name": "Player",
-            "seed_a": "123456789",
-            "seed_b": "362436069",
-        }
-        self.input_order = ["name", "seed_a", "seed_b"]
-        self.active_input = 0
         self.menu_pulse = 0.0
+
+        self.menu_option_order = ["play", "instructions", "rankings", "seed"]
+        self.menu_selected_index = 0
+        self.menu_option_rects: dict[str, pygame.Rect] = {}
+
+        self.seed_selector_open = False
+        self.seed_option_rects: list[tuple[pygame.Rect, int]] = []
+        self.selected_seed_index = 0
+        self.seed_presets = [
+            ("Clasica", "123456789", "362436069"),
+            ("Arcade", "42424242", "13371337"),
+            ("Caos", "987654321", "123123123"),
+            ("Infierno", "66666666", "314159265"),
+        ]
+
+        self.player_name_input = ""
+        self.name_confirm_rect = pygame.Rect(0, 0, 0, 0)
+        self.name_back_rect = pygame.Rect(0, 0, 0, 0)
+        self.instructions_back_rect = pygame.Rect(0, 0, 0, 0)
+        self.rankings_back_rect = pygame.Rect(0, 0, 0, 0)
 
     def _load_font(self, size: int) -> pygame.font.Font:
         font_path = self.repo_root / self.config.fonts["game_font"]
@@ -168,7 +182,19 @@ class DuckHuntTkApp:
             return None
         return pygame.transform.smoothscale(image, (WINDOW_WIDTH, WINDOW_HEIGHT))
 
-    def _load_creature_frames(self) -> dict[str, dict[str, pygame.Surface]]:
+    def _load_menu_blood_layers(self) -> list[pygame.Surface]:
+        layers: list[pygame.Surface] = []
+        for path in [
+            self.repo_root / "assets/images/blood.png",
+            self.repo_root / "assets/images/blood2.png",
+        ]:
+            surface = self._load_surface(path)
+            if surface is None:
+                continue
+            layers.append(surface)
+        return layers
+
+    def _load_creature_frames(self) -> dict[str, dict[str, list[pygame.Surface]]]:
         frames: dict[str, dict[str, list[pygame.Surface]]] = {}
         base_dir = self.repo_root / "assets/images"
 
@@ -292,9 +318,9 @@ class DuckHuntTkApp:
     def _top_score_text(self) -> str:
         rows = self.session.menu.get_rankings_view(limit=1)
         if not rows:
-            return "TOP SCORE: 00000"
+            return "TOP SCORE: 0"
         top = rows[0]
-        return f"TOP SCORE: {top.score:05d} - {top.player_name}"
+        return f"TOP SCORE: {top.score} - {top.player_name}"
 
     def run(self) -> None:
         while self.running:
@@ -318,22 +344,41 @@ class DuckHuntTkApp:
                 self._on_keydown(event)
 
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if self.state == "playing":
+                if self.state == "menu":
+                    self._on_menu_click(event.pos)
+                elif self.state == "name_entry":
+                    self._on_name_entry_click(event.pos)
+                elif self.state == "instructions":
+                    self._on_instructions_click(event.pos)
+                elif self.state == "rankings":
+                    self._on_rankings_click(event.pos)
+                elif self.state == "playing":
                     self._shoot_at(event.pos)
+                elif self.state == "game_over":
+                    self._go_to_menu()
 
     def _on_keydown(self, event: pygame.event.Event) -> None:
         if self.state == "menu":
             self._on_menu_keydown(event)
             return
 
+        if self.state == "name_entry":
+            self._on_name_entry_keydown(event)
+            return
+
+        if self.state == "instructions":
+            if event.key in {pygame.K_RETURN, pygame.K_ESCAPE}:
+                self._go_to_menu()
+            return
+
         if self.state == "playing":
             if event.key == pygame.K_ESCAPE:
-                self._go_to_menu("Returned to menu")
+                self._go_to_menu()
             return
 
         if self.state in {"rankings", "game_over"}:
             if event.key in {pygame.K_RETURN, pygame.K_ESCAPE}:
-                self._go_to_menu("Main menu")
+                self._go_to_menu()
             return
 
     def _on_menu_keydown(self, event: pygame.event.Event) -> None:
@@ -341,53 +386,125 @@ class DuckHuntTkApp:
             self.running = False
             return
 
-        if event.key == pygame.K_RETURN:
-            self._start_game_from_menu()
-            return
-
-        if event.key == pygame.K_r:
-            self.state = "rankings"
-            self.last_message = "Rankings"
-            return
-
-        if event.key == pygame.K_TAB:
-            self.active_input = (self.active_input + 1) % len(self.input_order)
-            return
-
         if event.key == pygame.K_UP:
-            self.active_input = (self.active_input - 1) % len(self.input_order)
+            self.menu_selected_index = (self.menu_selected_index - 1) % len(
+                self.menu_option_order
+            )
             return
 
         if event.key == pygame.K_DOWN:
-            self.active_input = (self.active_input + 1) % len(self.input_order)
+            self.menu_selected_index = (self.menu_selected_index + 1) % len(
+                self.menu_option_order
+            )
             return
 
-        active_field = self.input_order[self.active_input]
-        current = self.input_fields[active_field]
+        if event.key == pygame.K_TAB:
+            self.menu_selected_index = (self.menu_selected_index + 1) % len(
+                self.menu_option_order
+            )
+            return
+
+        if event.key == pygame.K_LEFT and self.seed_selector_open:
+            self.selected_seed_index = (self.selected_seed_index - 1) % len(
+                self.seed_presets
+            )
+            return
+
+        if event.key == pygame.K_RIGHT and self.seed_selector_open:
+            self.selected_seed_index = (self.selected_seed_index + 1) % len(
+                self.seed_presets
+            )
+            return
+
+        if event.key == pygame.K_RETURN:
+            self._activate_menu_option(self.menu_option_order[self.menu_selected_index])
+
+    def _activate_menu_option(self, option_id: str) -> None:
+        if option_id == "play":
+            self.state = "name_entry"
+            self.seed_selector_open = False
+            self.last_message = "Ingresa tu nombre para comenzar"
+            return
+
+        if option_id == "instructions":
+            self.state = "instructions"
+            self.seed_selector_open = False
+            self.last_message = "Instrucciones"
+            return
+
+        if option_id == "rankings":
+            self.state = "rankings"
+            self.seed_selector_open = False
+            self.last_message = "Rankings"
+            return
+
+        if option_id == "seed":
+            self.seed_selector_open = not self.seed_selector_open
+            return
+
+    def _on_name_entry_keydown(self, event: pygame.event.Event) -> None:
+        if event.key == pygame.K_ESCAPE:
+            self._go_to_menu()
+            return
+
+        if event.key == pygame.K_RETURN:
+            self._start_game_with_name()
+            return
 
         if event.key == pygame.K_BACKSPACE:
-            self.input_fields[active_field] = current[:-1]
+            self.player_name_input = self.player_name_input[:-1]
             return
 
         char = event.unicode
-        if not char or not char.isprintable():
+        if char and char.isprintable() and len(self.player_name_input) < 14:
+            self.player_name_input += char
+
+    def _on_name_entry_click(self, mouse_pos: tuple[int, int]) -> None:
+        if self.name_confirm_rect.collidepoint(mouse_pos):
+            self._start_game_with_name()
             return
 
-        if active_field == "name":
-            if len(current) < 14:
-                self.input_fields[active_field] += char
+        if self.name_back_rect.collidepoint(mouse_pos):
+            self._go_to_menu()
+
+    def _on_instructions_click(self, mouse_pos: tuple[int, int]) -> None:
+        if self.instructions_back_rect.collidepoint(mouse_pos):
+            self._go_to_menu()
+
+    def _on_rankings_click(self, mouse_pos: tuple[int, int]) -> None:
+        if self.rankings_back_rect.collidepoint(mouse_pos):
+            self._go_to_menu()
+
+    def _on_menu_click(self, mouse_pos: tuple[int, int]) -> None:
+        if self.seed_selector_open:
+            for rect, preset_index in self.seed_option_rects:
+                if rect.collidepoint(mouse_pos):
+                    self.selected_seed_index = preset_index
+                    self.seed_selector_open = False
+                    self.last_message = (
+                        f"Semilla aplicada: {self.seed_presets[preset_index][0]}"
+                    )
+                    return
+
+        for idx, option_id in enumerate(self.menu_option_order):
+            rect = self.menu_option_rects.get(option_id)
+            if rect and rect.collidepoint(mouse_pos):
+                self.menu_selected_index = idx
+                self._activate_menu_option(option_id)
+                return
+
+    def _start_game_with_name(self) -> None:
+        player_name = self.player_name_input.strip()
+        if not player_name:
+            self.last_message = "Escribe tu nombre"
             return
 
-        if char.isdigit() and len(current) < 10:
-            self.input_fields[active_field] += char
-
-    def _start_game_from_menu(self) -> None:
-        player_name = self.input_fields["name"].strip() or "Player"
+        _, seed_a_text, seed_b_text = self.seed_presets[self.selected_seed_index]
         try:
-            seed_a = int(self.input_fields["seed_a"])
-            seed_b = int(self.input_fields["seed_b"])
+            seed_a = int(seed_a_text)
+            seed_b = int(seed_b_text)
         except ValueError:
-            self.last_message = "Seed A and Seed B must be integers"
+            self.last_message = "La semilla seleccionada es invalida"
             return
 
         context = {
@@ -415,6 +532,7 @@ class DuckHuntTkApp:
         self.banner_timer = 0.0
         self.hit_flash = 0.0
         self.miss_flash = 0.0
+        self.seed_selector_open = False
         pygame.mouse.set_visible(False)
         self._process_runtime_events(events)
 
@@ -515,12 +633,13 @@ class DuckHuntTkApp:
 
         self._process_runtime_events(events)
 
-    def _go_to_menu(self, message: str) -> None:
+    def _go_to_menu(self, message: str | None = None) -> None:
         self.state = "menu"
         self.current_creature = None
         self.banner_text = ""
         self.banner_timer = 0.0
-        self.last_message = message
+        self.seed_selector_open = False
+        self.last_message = message or ""
         pygame.mouse.set_visible(True)
 
         if self.session.game.game_active:
@@ -549,6 +668,10 @@ class DuckHuntTkApp:
     def _render(self) -> None:
         if self.state == "menu":
             self._draw_menu()
+        elif self.state == "name_entry":
+            self._draw_name_entry()
+        elif self.state == "instructions":
+            self._draw_instructions()
         elif self.state == "rankings":
             self._draw_rankings()
         elif self.state == "playing":
@@ -559,89 +682,239 @@ class DuckHuntTkApp:
         pygame.display.flip()
 
     def _draw_menu(self) -> None:
+        self.seed_option_rects = []
+        self.menu_option_rects = {}
+
         if self.menu_background is not None:
             self.screen.blit(self.menu_background, (0, 0))
             veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-            veil.fill((8, 12, 18, 132))
+            veil.fill((12, 5, 8, 146))
             self.screen.blit(veil, (0, 0))
         else:
             self.screen.fill((12, 20, 30))
 
-        glow_alpha = int(75 + (math.sin(self.menu_pulse * 2.8) * 25))
+        for idx, layer in enumerate(self.menu_blood_layers):
+            alpha = 92 if idx == 0 else 78
+            blood = pygame.transform.smoothscale(
+                layer, (330 + idx * 120, 250 + idx * 80)
+            )
+            blood.set_alpha(alpha)
+            self.screen.blit(blood, (40 + idx * 830, 6 + idx * 360))
+
+        glow_alpha = int(70 + (math.sin(self.menu_pulse * 2.8) * 22))
         glow = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-        glow.fill((255, 194, 78, max(0, glow_alpha)))
+        glow.fill((220, 58, 45, max(0, glow_alpha)))
         self.screen.blit(glow, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
 
-        self._draw_title_block("DUCK HUNT", "Python Migration - Pygame Edition")
+        self._draw_title_block("DUCK HUNT")
+
+        self._draw_menu_options()
+
+        if self.seed_selector_open:
+            self._draw_seed_selector()
 
         top_score_surface = self.small_font.render(
             self._top_score_text(),
             True,
-            (248, 232, 164),
+            (255, 223, 161),
         )
-        self.screen.blit(top_score_surface, (132, 174))
-
-        box = pygame.Rect(130, 220, 1020, 360)
-        pygame.draw.rect(self.screen, (20, 33, 47), box, border_radius=12)
-        pygame.draw.rect(self.screen, (220, 183, 91), box, 4, border_radius=12)
-
-        self._draw_input_field("Player", "name", 260)
-        self._draw_input_field("Seed A", "seed_a", 330)
-        self._draw_input_field("Seed B", "seed_b", 400)
-
-        lines = [
-            "ENTER: Start game",
-            "TAB: Next field",
-            "R: Rankings",
-            "ESC: Exit",
-        ]
-        for index, line in enumerate(lines):
-            label = self.small_font.render(line, True, (188, 214, 244))
-            self.screen.blit(label, (170, 486 + (index * 24)))
-
-        msg = self.small_font.render(self.last_message, True, (255, 230, 144))
-        self.screen.blit(msg, (170, 596))
+        self.screen.blit(
+            top_score_surface,
+            (WINDOW_WIDTH - top_score_surface.get_width() - 20, WINDOW_HEIGHT - 34),
+        )
         self.screen.blit(self.scanline_overlay, (0, 0))
 
-    def _draw_input_field(self, label: str, key: str, top: int) -> None:
-        selected = self.input_order[self.active_input] == key
-        text_color = (255, 240, 170) if selected else (199, 217, 233)
-        border_color = (255, 191, 77) if selected else (87, 122, 148)
+    def _draw_menu_options(self) -> None:
+        options = [
+            ("play", "Jugar", (WINDOW_WIDTH // 2, 248)),
+            ("instructions", "Instrucciones", (WINDOW_WIDTH // 2, 300)),
+            ("rankings", "Rankings", (WINDOW_WIDTH // 2, 352)),
+            (
+                "seed",
+                f"Seleccionar semilla: {self.seed_presets[self.selected_seed_index][0]}",
+                (32, WINDOW_HEIGHT - 74),
+            ),
+        ]
 
-        label_surface = self.body_font.render(label, True, text_color)
-        self.screen.blit(label_surface, (170, top))
+        for index, (option_id, label, position) in enumerate(options):
+            selected = self.menu_selected_index == index
+            color = (255, 229, 167) if selected else (226, 213, 194)
+            text = self.body_font.render(label, True, color)
+            shadow = self.body_font.render(label, True, (36, 9, 8))
 
-        field_rect = pygame.Rect(360, top - 4, 600, 44)
-        pygame.draw.rect(self.screen, (8, 13, 24), field_rect, border_radius=6)
-        pygame.draw.rect(self.screen, border_color, field_rect, 2, border_radius=6)
+            if selected:
+                scale = 1.18
+                text = pygame.transform.smoothscale(
+                    text,
+                    (
+                        int(text.get_width() * scale),
+                        int(text.get_height() * scale),
+                    ),
+                )
+                shadow = pygame.transform.smoothscale(
+                    shadow,
+                    (
+                        int(shadow.get_width() * scale),
+                        int(shadow.get_height() * scale),
+                    ),
+                )
 
-        value = self.input_fields[key] or ""
-        value_surface = self.body_font.render(value, True, text_color)
-        self.screen.blit(value_surface, (378, top + 4))
+            if option_id == "seed":
+                x, y = position
+                self.screen.blit(shadow, (x + 2, y + 2))
+                self.screen.blit(text, (x, y))
+                rect = pygame.Rect(x, y, text.get_width(), text.get_height())
+            else:
+                center_x, y = position
+                text_rect = text.get_rect(center=(center_x, y))
+                shadow_rect = shadow.get_rect(center=(center_x + 2, y + 2))
+                self.screen.blit(shadow, shadow_rect)
+                self.screen.blit(text, text_rect)
+                rect = text_rect
+
+            self.menu_option_rects[option_id] = rect
+
+    def _draw_seed_selector(self) -> None:
+        title = self.small_font.render("Semillas", True, (255, 205, 190))
+        title_shadow = self.small_font.render("Semillas", True, (28, 8, 7))
+        origin_x = 20
+        origin_y = WINDOW_HEIGHT - 290
+
+        panel_rect = pygame.Rect(origin_x - 14, origin_y - 14, 420, 170)
+        pygame.draw.rect(self.screen, (18, 8, 10), panel_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (178, 68, 59), panel_rect, 2, border_radius=10)
+
+        self.screen.blit(title_shadow, (origin_x + 2, origin_y + 2))
+        self.screen.blit(title, (origin_x, origin_y))
+
+        for idx, (name, seed_a, seed_b) in enumerate(self.seed_presets):
+            option_text = f"{idx + 1}. {name}  ({seed_a}/{seed_b})"
+            option_color = (
+                (255, 233, 168) if idx == self.selected_seed_index else (253, 232, 188)
+            )
+            option_surface = self.small_font.render(option_text, True, option_color)
+            option_shadow = self.small_font.render(option_text, True, (34, 10, 10))
+            row_y = origin_y + 30 + (idx * 28)
+            self.screen.blit(option_shadow, (origin_x + 2, row_y + 2))
+            self.screen.blit(option_surface, (origin_x, row_y))
+            rect = pygame.Rect(
+                origin_x,
+                row_y,
+                option_surface.get_width(),
+                option_surface.get_height(),
+            )
+            self.seed_option_rects.append((rect, idx))
+
+    def _draw_name_entry(self) -> None:
+        self._draw_map_background()
+
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((9, 6, 8, 168))
+        self.screen.blit(overlay, (0, 0))
+
+        self._draw_title_block("JUGAR")
+
+        prompt = self.body_font.render("Escribe tu nombre", True, (255, 225, 180))
+        self.screen.blit(prompt, prompt.get_rect(center=(WINDOW_WIDTH // 2, 250)))
+
+        player_text = self.player_name_input or "_"
+        name_surface = self.hud_font.render(player_text, True, (255, 245, 220))
+        name_shadow = self.hud_font.render(player_text, True, (35, 9, 10))
+        name_rect = name_surface.get_rect(center=(WINDOW_WIDTH // 2, 308))
+        shadow_rect = name_shadow.get_rect(center=(WINDOW_WIDTH // 2 + 2, 310))
+        self.screen.blit(name_shadow, shadow_rect)
+        self.screen.blit(name_surface, name_rect)
+
+        start_label = self.small_font.render("Comenzar", True, (255, 217, 167))
+        back_label = self.small_font.render("Regresar", True, (241, 192, 172))
+        self.screen.blit(
+            start_label, start_label.get_rect(center=(WINDOW_WIDTH // 2, 374))
+        )
+        self.screen.blit(
+            back_label, back_label.get_rect(center=(WINDOW_WIDTH // 2, 410))
+        )
+
+        self.name_confirm_rect = start_label.get_rect(center=(WINDOW_WIDTH // 2, 374))
+        self.name_back_rect = back_label.get_rect(center=(WINDOW_WIDTH // 2, 410))
+
+        hint = self.small_font.render(
+            "ENTER para iniciar | ESC para volver", True, (222, 223, 214)
+        )
+        self.screen.blit(hint, hint.get_rect(center=(WINDOW_WIDTH // 2, 462)))
+        self.screen.blit(self.scanline_overlay, (0, 0))
+
+    def _draw_instructions(self) -> None:
+        self._draw_map_background()
+
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay.fill((7, 8, 12, 182))
+        self.screen.blit(overlay, (0, 0))
+
+        self._draw_title_block("INSTRUCCIONES")
+
+        lines = [
+            "1. Dispara con click izquierdo.",
+            "2. Cada objetivo tiene 3 disparos maximo.",
+            "3. Si se acaban los disparos, termina la partida.",
+            "4. Elige semilla en el menu para partidas reproducibles.",
+        ]
+        base_y = 240
+        for index, line in enumerate(lines):
+            txt = self.body_font.render(line, True, (236, 228, 205))
+            self.screen.blit(
+                txt, txt.get_rect(center=(WINDOW_WIDTH // 2, base_y + index * 42))
+            )
+
+        back = self.small_font.render("Regresar", True, (255, 198, 174))
+        self.instructions_back_rect = back.get_rect(center=(WINDOW_WIDTH // 2, 472))
+        self.screen.blit(back, self.instructions_back_rect)
+
+        self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_rankings(self) -> None:
-        self.screen.fill((9, 16, 28))
-        self._draw_title_block("RANKINGS", "Top hunters")
+        if self.menu_background is not None:
+            self.screen.blit(self.menu_background, (0, 0))
+            veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            veil.fill((12, 5, 8, 156))
+            self.screen.blit(veil, (0, 0))
+        else:
+            self.screen.fill((9, 16, 28))
+
+        for idx, layer in enumerate(self.menu_blood_layers):
+            alpha = 75 if idx == 0 else 62
+            blood = pygame.transform.smoothscale(
+                layer, (290 + idx * 90, 220 + idx * 60)
+            )
+            blood.set_alpha(alpha)
+            self.screen.blit(blood, (72 + idx * 860, 36 + idx * 334))
+
+        self._draw_title_block("RANKINGS")
 
         rows = self.session.menu.get_rankings_view(limit=10)
-        panel = pygame.Rect(150, 180, 980, 470)
-        pygame.draw.rect(self.screen, (16, 26, 43), panel, border_radius=12)
-        pygame.draw.rect(self.screen, (187, 164, 105), panel, 3, border_radius=12)
+        panel = pygame.Rect(130, 176, 1020, 470)
+        pygame.draw.rect(self.screen, (20, 10, 12), panel, border_radius=12)
+        pygame.draw.rect(self.screen, (178, 70, 60), panel, 3, border_radius=12)
+
+        header = self.small_font.render(
+            "POS   NOMBRE          PTS     RONDA   MAPA", True, (255, 226, 176)
+        )
+        self.screen.blit(header, (170, 206))
 
         if not rows:
-            empty = self.body_font.render("No scores yet", True, (222, 226, 233))
-            self.screen.blit(empty, (190, 240))
+            empty = self.body_font.render("Aun no hay puntajes", True, (239, 224, 209))
+            self.screen.blit(empty, (190, 258))
         else:
             for idx, row in enumerate(rows):
                 line = (
-                    f"{row.rank:>2}. {row.player_name:<12} "
-                    f"{row.score:>5} pts | R{row.round:<2} | {row.map_name}"
+                    f"{row.rank:>2}    {row.player_name:<12} "
+                    f"{row.score:>6}   R{row.round:<2}    {row.map_name}"
                 )
-                surface = self.body_font.render(line, True, (214, 230, 245))
-                self.screen.blit(surface, (190, 220 + (idx * 38)))
+                surface = self.body_font.render(line, True, (239, 224, 209))
+                self.screen.blit(surface, (170, 246 + (idx * 36)))
 
-        hint = self.small_font.render("ENTER or ESC: Back", True, (188, 214, 244))
-        self.screen.blit(hint, (190, 610))
+        hint = self.small_font.render("Regresar", True, (255, 207, 182))
+        self.rankings_back_rect = hint.get_rect(center=(WINDOW_WIDTH // 2, 612))
+        self.screen.blit(hint, self.rankings_back_rect)
         self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_playing(self) -> None:
@@ -856,11 +1129,15 @@ class DuckHuntTkApp:
         pygame.draw.line(self.screen, color, (x - 28, y), (x + 28, y), 2)
         pygame.draw.line(self.screen, color, (x, y - 28), (x, y + 28), 2)
 
-    def _draw_title_block(self, title: str, subtitle: str) -> None:
+    def _draw_title_block(self, title: str) -> None:
         title_surface = self.title_font.render(title, True, (244, 209, 117))
-        subtitle_surface = self.small_font.render(subtitle, True, (187, 211, 236))
-        self.screen.blit(title_surface, (128, 70))
-        self.screen.blit(subtitle_surface, (132, 142))
+        title_shadow = self.title_font.render(title, True, (45, 8, 6))
+        center_x = WINDOW_WIDTH // 2
+        y = 76
+        self.screen.blit(
+            title_shadow, title_shadow.get_rect(center=(center_x + 2, y + 2))
+        )
+        self.screen.blit(title_surface, title_surface.get_rect(center=(center_x, y)))
 
 
 def main() -> None:
