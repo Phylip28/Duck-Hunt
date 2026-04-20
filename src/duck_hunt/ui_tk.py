@@ -108,6 +108,7 @@ class DuckHuntTkApp:
         self.background_cache = self._load_background_cache()
         self.menu_background = self._load_menu_background()
         self.menu_blood_layers = self._load_menu_blood_layers()
+        self.dog_hunter_surface = self._load_dog_hunter_surface()
         self.creature_frames = self._load_creature_frames()
         self.target_surface = self._load_target_surface()
         self.scanline_overlay = self._build_scanline_overlay()
@@ -193,6 +194,17 @@ class DuckHuntTkApp:
                 continue
             layers.append(surface)
         return layers
+
+    def _load_dog_hunter_surface(self) -> pygame.Surface | None:
+        candidates = [
+            self.repo_root / "assets/images/dog-duck1.png",
+            self.repo_root / "assets/images/dog-duck2.png",
+        ]
+        for path in candidates:
+            surface = self._load_surface(path)
+            if surface is not None:
+                return surface
+        return None
 
     def _load_creature_frames(self) -> dict[str, dict[str, list[pygame.Surface]]]:
         frames: dict[str, dict[str, list[pygame.Surface]]] = {}
@@ -382,6 +394,26 @@ class DuckHuntTkApp:
             return
 
     def _on_menu_keydown(self, event: pygame.event.Event) -> None:
+        if self.seed_selector_open:
+            if event.key in {pygame.K_UP, pygame.K_LEFT}:
+                self.selected_seed_index = (self.selected_seed_index - 1) % len(
+                    self.seed_presets
+                )
+                return
+
+            if event.key in {pygame.K_DOWN, pygame.K_RIGHT, pygame.K_TAB}:
+                self.selected_seed_index = (self.selected_seed_index + 1) % len(
+                    self.seed_presets
+                )
+                return
+
+            if event.key in {pygame.K_RETURN, pygame.K_SPACE, pygame.K_ESCAPE}:
+                self.seed_selector_open = False
+                self.last_message = ""
+                return
+
+            return
+
         if event.key == pygame.K_ESCAPE:
             self.running = False
             return
@@ -401,18 +433,6 @@ class DuckHuntTkApp:
         if event.key == pygame.K_TAB:
             self.menu_selected_index = (self.menu_selected_index + 1) % len(
                 self.menu_option_order
-            )
-            return
-
-        if event.key == pygame.K_LEFT and self.seed_selector_open:
-            self.selected_seed_index = (self.selected_seed_index - 1) % len(
-                self.seed_presets
-            )
-            return
-
-        if event.key == pygame.K_RIGHT and self.seed_selector_open:
-            self.selected_seed_index = (self.selected_seed_index + 1) % len(
-                self.seed_presets
             )
             return
 
@@ -440,6 +460,7 @@ class DuckHuntTkApp:
 
         if option_id == "seed":
             self.seed_selector_open = not self.seed_selector_open
+            self.menu_selected_index = self.menu_option_order.index("seed")
             return
 
     def _on_name_entry_keydown(self, event: pygame.event.Event) -> None:
@@ -481,10 +502,10 @@ class DuckHuntTkApp:
                 if rect.collidepoint(mouse_pos):
                     self.selected_seed_index = preset_index
                     self.seed_selector_open = False
-                    self.last_message = (
-                        f"Semilla aplicada: {self.seed_presets[preset_index][0]}"
-                    )
+                    self.last_message = ""
                     return
+
+            return
 
         for idx, option_id in enumerate(self.menu_option_order):
             rect = self.menu_option_rects.get(option_id)
@@ -739,11 +760,12 @@ class DuckHuntTkApp:
         for index, (option_id, label, position) in enumerate(options):
             selected = self.menu_selected_index == index
             color = (255, 229, 167) if selected else (226, 213, 194)
-            text = self.body_font.render(label, True, color)
-            shadow = self.body_font.render(label, True, (36, 9, 8))
+            option_font = self.small_font if option_id == "seed" else self.body_font
+            text = option_font.render(label, True, color)
+            shadow = option_font.render(label, True, (36, 9, 8))
 
             if selected:
-                scale = 1.18
+                scale = 1.24 if option_id == "seed" else 1.18
                 text = pygame.transform.smoothscale(
                     text,
                     (
@@ -778,9 +800,9 @@ class DuckHuntTkApp:
         title = self.small_font.render("Semillas", True, (255, 205, 190))
         title_shadow = self.small_font.render("Semillas", True, (28, 8, 7))
         origin_x = 20
-        origin_y = WINDOW_HEIGHT - 290
+        origin_y = WINDOW_HEIGHT - 340
 
-        panel_rect = pygame.Rect(origin_x - 14, origin_y - 14, 420, 170)
+        panel_rect = pygame.Rect(origin_x - 14, origin_y - 14, 268, 178)
         pygame.draw.rect(self.screen, (18, 8, 10), panel_rect, border_radius=10)
         pygame.draw.rect(self.screen, (178, 68, 59), panel_rect, 2, border_radius=10)
 
@@ -788,13 +810,14 @@ class DuckHuntTkApp:
         self.screen.blit(title, (origin_x, origin_y))
 
         for idx, (name, seed_a, seed_b) in enumerate(self.seed_presets):
-            option_text = f"{idx + 1}. {name}  ({seed_a}/{seed_b})"
+            del seed_a, seed_b
+            option_text = name
             option_color = (
                 (255, 233, 168) if idx == self.selected_seed_index else (253, 232, 188)
             )
             option_surface = self.small_font.render(option_text, True, option_color)
             option_shadow = self.small_font.render(option_text, True, (34, 10, 10))
-            row_y = origin_y + 30 + (idx * 28)
+            row_y = origin_y + 34 + (idx * 30)
             self.screen.blit(option_shadow, (origin_x + 2, row_y + 2))
             self.screen.blit(option_surface, (origin_x, row_y))
             rect = pygame.Rect(
@@ -805,50 +828,101 @@ class DuckHuntTkApp:
             )
             self.seed_option_rects.append((rect, idx))
 
-    def _draw_name_entry(self) -> None:
-        self._draw_map_background()
+    def _draw_dog_hunter_backdrop(self, variant: str) -> None:
+        if self.menu_background is not None:
+            self.screen.blit(self.menu_background, (0, 0))
+            veil = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            veil.fill((10, 6, 9, 168))
+            self.screen.blit(veil, (0, 0))
+        else:
+            self.screen.fill((13, 9, 12))
 
-        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((9, 6, 8, 168))
-        self.screen.blit(overlay, (0, 0))
+        for idx, layer in enumerate(self.menu_blood_layers):
+            alpha = 86 if idx == 0 else 68
+            blood = pygame.transform.smoothscale(
+                layer, (300 + idx * 100, 220 + idx * 72)
+            )
+            blood.set_alpha(alpha)
+            self.screen.blit(blood, (60 + idx * 848, 28 + idx * 356))
+
+        if self.dog_hunter_surface is not None:
+            dog_scale = (430, 335) if variant == "instructions" else (520, 400)
+            dog = pygame.transform.smoothscale(self.dog_hunter_surface, dog_scale)
+            dog = pygame.transform.flip(dog, True, False)
+            dog_pos = (56, 302) if variant == "instructions" else (36, 268)
+            dog_shadow = dog.copy()
+            dog_shadow.fill((0, 0, 0, 150), special_flags=pygame.BLEND_RGBA_MULT)
+            self.screen.blit(dog_shadow, (dog_pos[0] + 12, dog_pos[1] + 12))
+            self.screen.blit(dog, dog_pos)
+
+        if variant == "instructions":
+            barrel = pygame.Rect(420, 372, 520, 28)
+            pygame.draw.rect(self.screen, (109, 114, 122), barrel, border_radius=8)
+            pygame.draw.rect(self.screen, (42, 46, 55), barrel, 2, border_radius=8)
+            stock = [
+                (388, 412),
+                (502, 414),
+                (526, 444),
+                (448, 468),
+                (372, 448),
+            ]
+            pygame.draw.polygon(self.screen, (96, 57, 42), stock)
+            pygame.draw.polygon(self.screen, (45, 21, 16), stock, 2)
+        else:
+            fist_center = (792, 362)
+            for idx, offset in enumerate([-66, -22, 22, 66]):
+                knuckle = (fist_center[0] + offset, fist_center[1] - 58)
+                pygame.draw.circle(self.screen, (132, 137, 145), knuckle, 24)
+                pygame.draw.circle(self.screen, (62, 67, 76), knuckle, 2)
+                if idx in {1, 2}:
+                    pygame.draw.circle(self.screen, (164, 169, 176), knuckle, 10)
+
+            fist_rect = pygame.Rect(fist_center[0] - 126, fist_center[1] - 44, 252, 118)
+            pygame.draw.rect(self.screen, (96, 102, 112), fist_rect, border_radius=18)
+            pygame.draw.rect(self.screen, (54, 59, 67), fist_rect, 2, border_radius=18)
+
+            plate_rect = pygame.Rect(696, 336, 298, 76)
+            pygame.draw.rect(self.screen, (34, 36, 42), plate_rect, border_radius=12)
+            pygame.draw.rect(
+                self.screen, (126, 131, 141), plate_rect, 2, border_radius=12
+            )
+
+            for rivet_x in [710, 734, 956, 980]:
+                pygame.draw.circle(self.screen, (160, 165, 173), (rivet_x, 348), 4)
+                pygame.draw.circle(self.screen, (160, 165, 173), (rivet_x, 399), 4)
+
+    def _draw_name_entry(self) -> None:
+        self._draw_dog_hunter_backdrop(variant="name")
 
         self._draw_title_block("JUGAR")
 
         prompt = self.body_font.render("Escribe tu nombre", True, (255, 225, 180))
-        self.screen.blit(prompt, prompt.get_rect(center=(WINDOW_WIDTH // 2, 250)))
+        self.screen.blit(prompt, prompt.get_rect(center=(845, 268)))
 
         player_text = self.player_name_input or "_"
         name_surface = self.hud_font.render(player_text, True, (255, 245, 220))
-        name_shadow = self.hud_font.render(player_text, True, (35, 9, 10))
-        name_rect = name_surface.get_rect(center=(WINDOW_WIDTH // 2, 308))
-        shadow_rect = name_shadow.get_rect(center=(WINDOW_WIDTH // 2 + 2, 310))
+        name_shadow = self.hud_font.render(player_text, True, (9, 11, 16))
+        name_rect = name_surface.get_rect(center=(846, 373))
+        shadow_rect = name_shadow.get_rect(center=(848, 375))
         self.screen.blit(name_shadow, shadow_rect)
         self.screen.blit(name_surface, name_rect)
 
         start_label = self.small_font.render("Comenzar", True, (255, 217, 167))
         back_label = self.small_font.render("Regresar", True, (241, 192, 172))
-        self.screen.blit(
-            start_label, start_label.get_rect(center=(WINDOW_WIDTH // 2, 374))
-        )
-        self.screen.blit(
-            back_label, back_label.get_rect(center=(WINDOW_WIDTH // 2, 410))
-        )
+        self.screen.blit(start_label, start_label.get_rect(center=(848, 452)))
+        self.screen.blit(back_label, back_label.get_rect(center=(848, 488)))
 
-        self.name_confirm_rect = start_label.get_rect(center=(WINDOW_WIDTH // 2, 374))
-        self.name_back_rect = back_label.get_rect(center=(WINDOW_WIDTH // 2, 410))
+        self.name_confirm_rect = start_label.get_rect(center=(848, 452))
+        self.name_back_rect = back_label.get_rect(center=(848, 488))
 
         hint = self.small_font.render(
             "ENTER para iniciar | ESC para volver", True, (222, 223, 214)
         )
-        self.screen.blit(hint, hint.get_rect(center=(WINDOW_WIDTH // 2, 462)))
+        self.screen.blit(hint, hint.get_rect(center=(850, 538)))
         self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_instructions(self) -> None:
-        self._draw_map_background()
-
-        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((7, 8, 12, 182))
-        self.screen.blit(overlay, (0, 0))
+        self._draw_dog_hunter_backdrop(variant="instructions")
 
         self._draw_title_block("INSTRUCCIONES")
 
@@ -858,15 +932,13 @@ class DuckHuntTkApp:
             "3. Si se acaban los disparos, termina la partida.",
             "4. Elige semilla en el menu para partidas reproducibles.",
         ]
-        base_y = 240
+        base_y = 236
         for index, line in enumerate(lines):
             txt = self.body_font.render(line, True, (236, 228, 205))
-            self.screen.blit(
-                txt, txt.get_rect(center=(WINDOW_WIDTH // 2, base_y + index * 42))
-            )
+            self.screen.blit(txt, txt.get_rect(center=(850, base_y + index * 42)))
 
         back = self.small_font.render("Regresar", True, (255, 198, 174))
-        self.instructions_back_rect = back.get_rect(center=(WINDOW_WIDTH // 2, 472))
+        self.instructions_back_rect = back.get_rect(center=(852, 472))
         self.screen.blit(back, self.instructions_back_rect)
 
         self.screen.blit(self.scanline_overlay, (0, 0))
