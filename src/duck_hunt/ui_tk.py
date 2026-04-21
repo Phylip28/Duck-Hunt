@@ -172,7 +172,7 @@ class DuckHuntTkApp:
 
         self.menu_pulse = 0.0
 
-        self.menu_option_order = ["play", "instructions", "rankings", "game_mode"]
+        self.menu_option_order = ["play", "instructions", "rankings", "historia", "game_mode"]
         self.menu_selected_index = 0
         self.menu_option_rects: dict[str, pygame.Rect] = {}
 
@@ -225,6 +225,10 @@ class DuckHuntTkApp:
 
         # Score popups: list of {text, x, y, timer, max_timer}
         self.score_popups: list[dict] = []
+
+        self._video_player: object | None = None
+        self._video_frame_surface: pygame.Surface | None = None
+        self._video_wait: float = 0.0  # seconds until next get_frame() call
 
         self.pending_player_name = ""
         self.pending_seed_a = 0
@@ -623,6 +627,11 @@ class DuckHuntTkApp:
             self._toggle_fullscreen()
             return
 
+        if self.state == "historia":
+            if event.key == pygame.K_ESCAPE:
+                self._exit_historia()
+            return
+
         if self.state == "menu":
             self._on_menu_keydown(event)
             return
@@ -732,6 +741,10 @@ class DuckHuntTkApp:
         if option_id == "rankings":
             self.state = "rankings"
             self.last_message = "Rankings"
+            return
+
+        if option_id == "historia":
+            self._enter_historia()
             return
 
         if option_id == "game_mode":
@@ -1238,12 +1251,18 @@ class DuckHuntTkApp:
 
     def _update(self, dt: float, dt_ms: int) -> None:
         self.menu_pulse += dt
-        self._ensure_music()
+        # Do not touch the mixer while the historia video is playing.
+        if self.state != "historia":
+            self._ensure_music()
 
         if self.state == "intro":
             self.intro_timer = max(0.0, self.intro_timer - dt)
             if self.intro_timer <= 0.0:
                 self.state = "menu"
+            return
+
+        if self.state == "historia":
+            self._update_historia(dt)
             return
 
         if self.state == "map_selector" and self.map_carousel_running:
@@ -1340,6 +1359,8 @@ class DuckHuntTkApp:
             self._draw_instructions()
         elif self.state == "rankings":
             self._draw_rankings()
+        elif self.state == "historia":
+            self._draw_historia()
         elif self.state == "playing":
             self._draw_playing()
         else:
@@ -1398,6 +1419,7 @@ class DuckHuntTkApp:
             ("play", "Jugar", (WINDOW_WIDTH // 2, 248)),
             ("instructions", "Instrucciones", (WINDOW_WIDTH // 2, 300)),
             ("rankings", "Rankings", (WINDOW_WIDTH // 2, 352)),
+            ("historia", "Historia", (WINDOW_WIDTH // 2, 404)),
             (
                 "game_mode",
                 "Modo de juego: "
@@ -2188,6 +2210,113 @@ class DuckHuntTkApp:
         pygame.draw.circle(self.screen, color, (x, y), 20, 2)
         pygame.draw.line(self.screen, color, (x - 28, y), (x + 28, y), 2)
         pygame.draw.line(self.screen, color, (x, y - 28), (x, y + 28), 2)
+
+    def _enter_historia(self) -> None:
+        video_path = self.repo_root / "0421.mp4"
+        if not video_path.exists():
+            self._go_to_menu("No se encontro el archivo 0421.mp4")
+            return
+
+        try:
+            from ffpyplayer.player import MediaPlayer  # type: ignore[import]
+        except ImportError:
+            self._go_to_menu("Instala ffpyplayer: pip install ffpyplayer")
+            return
+
+        # Only stop music — do NOT quit() the mixer.
+        # Quitting invalidates all Sound objects and breaks audio after.
+        try:
+            pygame.mixer.music.stop()
+        except pygame.error:
+            pass
+        self.audio.music_playing = False
+
+        ff_opts = {"out_fmt": "rgb24"}
+        player = MediaPlayer(str(video_path), ff_opts=ff_opts)
+        self._video_player = player
+        self._video_frame_surface = None
+        self._video_wait = 0.0
+        self.state = "historia"
+        pygame.mouse.set_visible(True)
+
+    def _update_historia(self, dt: float) -> None:
+        # Respect the inter-frame interval returned by get_frame().
+        # val == how many seconds to wait before calling get_frame() again.
+        # Calling it every game tick (60 fps) without this guard causes the
+        # decoder queue to drain at full CPU speed, making video run 2-3x fast.
+        self._video_wait -= dt
+        if self._video_wait > 0.0:
+            return
+
+        player = self._video_player
+        if player is None:
+            self._end_historia()
+            return
+        try:
+            frame, val = player.get_frame()  # type: ignore[union-attr]
+        except Exception:
+            self._end_historia()
+            return
+
+        if val == "eof":
+            self._end_historia()
+            return
+
+        if frame is None:
+            # Decoder not ready yet; retry in 5 ms.
+            self._video_wait = 0.005
+            return
+
+        # val is seconds to wait before fetching the NEXT frame.
+        # Use it directly so playback matches the source frame rate.
+        self._video_wait = float(val) if isinstance(val, (int, float)) and val > 0 else 0.0
+
+        try:
+            img, _pts = frame
+            w, h = img.get_size()
+            buf = bytes(img.to_bytearray()[0])
+            surface = pygame.image.frombuffer(buf, (w, h), "RGB")
+            self._video_frame_surface = pygame.transform.scale(
+                surface, (WINDOW_WIDTH, WINDOW_HEIGHT)
+            )
+        except Exception:
+            pass
+
+    def _exit_historia(self) -> None:
+        self._stop_historia()
+        self._go_to_menu()
+
+    def _end_historia(self) -> None:
+        self._stop_historia()
+        self._go_to_menu()
+
+    def _stop_historia(self) -> None:
+        player = self._video_player
+        if player is not None:
+            try:
+                player.close_player()  # type: ignore[union-attr]
+            except Exception:
+                pass
+            self._video_player = None
+        self._video_frame_surface = None
+        # Reset AudioManager flag so _go_to_menu will call play_music() again.
+        # Sound objects are still valid because we never called mixer.quit().
+        self.audio.music_playing = False
+
+    def _draw_historia(self) -> None:
+        if self._video_frame_surface is not None:
+            self.screen.blit(self._video_frame_surface, (0, 0))
+        else:
+            self.screen.fill((0, 0, 0))
+        hint = self.small_font.render("ESC - Volver al menu", True, (220, 220, 220))
+        hint_bg = pygame.Surface(
+            (hint.get_width() + 18, hint.get_height() + 10), pygame.SRCALPHA
+        )
+        hint_bg.fill((0, 0, 0, 150))
+        bx = WINDOW_WIDTH - hint_bg.get_width() - 14
+        by = WINDOW_HEIGHT - hint_bg.get_height() - 14
+        self.screen.blit(hint_bg, (bx, by))
+        self.screen.blit(hint, (bx + 9, by + 5))
 
     def _draw_title_block(self, title: str) -> None:
         title_surface = self.title_font.render(title, True, (244, 209, 117))
