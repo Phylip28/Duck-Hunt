@@ -54,6 +54,7 @@ class CreatureSprite:
     vy: float
     phase: float
     age: float = 0.0
+    entering_from_bottom: bool = False
 
     def rect(self) -> pygame.Rect:
         return pygame.Rect(int(self.x), int(self.y), self.width, self.height)
@@ -71,6 +72,13 @@ class CreatureSprite:
 
         min_y = TOP_MARGIN
         max_y = height_limit - BOTTOM_MARGIN - self.height
+
+        # Let creatures enter from below before applying normal vertical bounds.
+        if self.entering_from_bottom:
+            if self.y > max_y:
+                return
+            self.entering_from_bottom = False
+
         if self.y < min_y:
             self.y = float(min_y)
             self.vy = abs(self.vy) + 12.0
@@ -115,6 +123,12 @@ class DuckHuntTkApp:
         self.creature_frames = self._load_creature_frames()
         self.target_surface = self._load_target_surface()
         self.scanline_overlay = self._build_scanline_overlay()
+        self.audio_enabled = False
+        self.sfx: dict[str, pygame.mixer.Sound] = {}
+        self.music_path: Path | None = None
+        self.music_started = False
+        self._init_audio()
+        self._ensure_music()
 
         self.title_font = self._load_font(54)
         self.hud_font = self._load_font(28)
@@ -170,6 +184,71 @@ class DuckHuntTkApp:
         self.map_selector_phase_elapsed_ms = 0
         self.map_selector_hold_ms = 1700
         self.map_selector_started_game = False
+
+    def _init_audio(self) -> None:
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init()
+        except pygame.error:
+            self.audio_enabled = False
+            return
+
+        self.audio_enabled = True
+
+        soundtrack_rel = self.config.sounds.get("soundtrack")
+        if isinstance(soundtrack_rel, str):
+            music_candidate = self.repo_root / soundtrack_rel
+            if music_candidate.exists():
+                self.music_path = music_candidate
+
+        for key, rel_path in self.config.sounds.items():
+            if key == "soundtrack":
+                continue
+            if not isinstance(rel_path, str):
+                continue
+
+            sound_path = self.repo_root / rel_path
+            if not sound_path.exists():
+                continue
+
+            try:
+                self.sfx[key] = pygame.mixer.Sound(str(sound_path))
+            except pygame.error:
+                continue
+
+    def _play_sfx(self, key: str) -> bool:
+        if not self.audio_enabled:
+            return False
+
+        sound = self.sfx.get(key)
+        if sound is None:
+            return False
+
+        try:
+            sound.play()
+            return True
+        except pygame.error:
+            return False
+
+    def _ensure_music(self) -> None:
+        if not self.audio_enabled:
+            return
+        if self.music_path is None:
+            return
+
+        try:
+            if not self.music_started:
+                pygame.mixer.music.load(str(self.music_path))
+                pygame.mixer.music.set_volume(0.5)
+                pygame.mixer.music.play(-1)
+                self.music_started = True
+                return
+
+            if not pygame.mixer.music.get_busy():
+                pygame.mixer.music.play(-1)
+        except pygame.error:
+            self.music_started = False
+            return
 
     def _load_font(self, size: int) -> pygame.font.Font:
         font_path = self.repo_root / self.config.fonts["game_font"]
@@ -651,6 +730,7 @@ class DuckHuntTkApp:
         self.hit_flash = 0.0
         self.miss_flash = 0.0
         pygame.mouse.set_visible(False)
+        self._ensure_music()
         self._process_runtime_events(events)
 
     def _process_runtime_events(self, events: list[object]) -> None:
@@ -665,6 +745,11 @@ class DuckHuntTkApp:
             elif event_type == "creature_spawned":
                 creature_type = str(payload.get("creature_type", "duck"))
                 self._spawn_creature(creature_type)
+                if creature_type in {"duck", "seagull"}:
+                    self._play_sfx("duck_quack")
+                else:
+                    if not self._play_sfx("duck_flap"):
+                        self._play_sfx("duck_quack")
                 shots_left = self.session.game.shots_remaining
                 self.last_message = f"Target: {creature_type} | Shots: {shots_left}"
 
@@ -674,6 +759,7 @@ class DuckHuntTkApp:
                 if action == "hit":
                     points = int(payload.get("points", 0))
                     self.hit_flash = 0.12
+                    self._play_sfx("dog_score")
                     self.last_message = f"Hit! +{points}"
                 elif action == "miss":
                     self.miss_flash = 0.12
@@ -703,19 +789,14 @@ class DuckHuntTkApp:
             spec = self.config.creature_types["duck"]
             creature_type = "duck"
 
-        start_on_left = bool(self.session.rng.randint(0, 1))
-        x = -float(spec.width) if start_on_left else float(WINDOW_WIDTH + spec.width)
-        y = float(
-            self.session.rng.randint(
-                TOP_MARGIN + 10,
-                WINDOW_HEIGHT - BOTTOM_MARGIN - spec.height,
-            )
-        )
+        move_right = bool(self.session.rng.randint(0, 1))
+        x = float(self.session.rng.randint(42, WINDOW_WIDTH - spec.width - 42))
+        y = float(WINDOW_HEIGHT + spec.height + self.session.rng.randint(20, 140))
 
         speed_factor = max(0.75, float(self.session.game.duck_speed) / 4.0)
         base_speed = (115.0 + (spec.base_speed * 25.0)) * speed_factor
-        vx = base_speed if start_on_left else -base_speed
-        vy = float(self.session.rng.randint(-85, 85))
+        vx = base_speed if move_right else -base_speed
+        vy = -float(self.session.rng.randint(150, 255)) * speed_factor
         phase = self.session.rng.next_float() * math.tau
 
         self.current_creature = CreatureSprite(
@@ -728,11 +809,14 @@ class DuckHuntTkApp:
             vx=vx,
             vy=vy,
             phase=phase,
+            entering_from_bottom=True,
         )
 
     def _shoot_at(self, mouse_pos: tuple[int, int]) -> None:
         if self.current_creature is None:
             return
+
+        self._play_sfx("duck_shot")
 
         hit = self.current_creature.rect().collidepoint(mouse_pos)
         action = "hit" if hit else "miss"
@@ -763,6 +847,7 @@ class DuckHuntTkApp:
 
     def _update(self, dt: float, dt_ms: int) -> None:
         self.menu_pulse += dt
+        self._ensure_music()
 
         if self.state == "map_selector" and self.map_carousel_running:
             self.map_carousel_elapsed_ms += dt_ms
