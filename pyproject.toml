@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
   "Pillow>=10.0.0",
   "pygame>=2.6.0",
+  "ffpyplayer>=4.3.0",
 ]
 
 [project.optional-dependencies]

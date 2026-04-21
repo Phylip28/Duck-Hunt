@@ -172,7 +172,13 @@ class DuckHuntTkApp:
 
         self.menu_pulse = 0.0
 
-        self.menu_option_order = ["play", "instructions", "rankings", "historia", "game_mode"]
+        self.menu_option_order = [
+            "play",
+            "instructions",
+            "rankings",
+            "historia",
+            "game_mode",
+        ]
         self.menu_selected_index = 0
         self.menu_option_rects: dict[str, pygame.Rect] = {}
 
@@ -2212,9 +2218,9 @@ class DuckHuntTkApp:
         pygame.draw.line(self.screen, color, (x, y - 28), (x, y + 28), 2)
 
     def _enter_historia(self) -> None:
-        video_path = self.repo_root / "0421.mp4"
+        video_path = self.repo_root / "assets" / "video" / "duck-hunt-history.mp4"
         if not video_path.exists():
-            self._go_to_menu("No se encontro el archivo 0421.mp4")
+            self._go_to_menu("No se encontro el archivo duck-hunt-history.mp4")
             return
 
         try:
@@ -2269,7 +2275,9 @@ class DuckHuntTkApp:
 
         # val is seconds to wait before fetching the NEXT frame.
         # Use it directly so playback matches the source frame rate.
-        self._video_wait = float(val) if isinstance(val, (int, float)) and val > 0 else 0.0
+        self._video_wait = (
+            float(val) if isinstance(val, (int, float)) and val > 0 else 0.0
+        )
 
         try:
             img, _pts = frame
