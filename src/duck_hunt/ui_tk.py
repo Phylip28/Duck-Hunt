@@ -218,6 +218,13 @@ class DuckHuntTkApp:
         self.boss_anim_y: float = 0.0
         self.boss_anim_kind: str = "duck"
         self.total_kills: int = 0
+        self.pending_spawn_type: str | None = None  # deferred while boss is active
+
+        # Extra (bonus) creatures for multi-creature rounds
+        self.extra_creatures: list[CreatureSprite] = []
+
+        # Score popups: list of {text, x, y, timer, max_timer}
+        self.score_popups: list[dict] = []
 
         self.pending_player_name = ""
         self.pending_seed_a = 0
@@ -875,6 +882,9 @@ class DuckHuntTkApp:
         self.session.menu.current_game_mode = self.active_game_mode_id
         self.total_kills = 0
         self.boss_anim_state = "idle"
+        self.pending_spawn_type = None
+        self.extra_creatures = []
+        self.score_popups = []
 
         self.state = "playing"
         if self.active_game_mode_id == "futuristic":
@@ -906,7 +916,11 @@ class DuckHuntTkApp:
 
             elif event_type == "creature_spawned":
                 creature_type = str(payload.get("creature_type", "duck"))
-                self._spawn_creature(creature_type)
+                if self.boss_anim_state != "idle":
+                    # Boss is on screen — defer the spawn until it finishes
+                    self.pending_spawn_type = creature_type
+                else:
+                    self._spawn_creature_set(creature_type)
                 if creature_type in {"duck", "seagull", "zombie_duck"}:
                     self._play_sfx("duck_quack")
                 else:
@@ -924,8 +938,15 @@ class DuckHuntTkApp:
                     self._play_sfx("dog_score")
                     self.last_message = f"Hit! +{points}"
                     self.audio.play_sound("score", 0.8)
+                    # Score popup at creature position
+                    if self.current_creature is not None:
+                        cx = int(
+                            self.current_creature.x + self.current_creature.width / 2
+                        )
+                        cy = int(self.current_creature.y)
+                        self._add_score_popup(points, (cx, cy))
                     self.total_kills += 1
-                    if self.total_kills % 2 == 0 and self.boss_anim_state == "idle":
+                    if self.total_kills % 3 == 0 and self.boss_anim_state == "idle":
                         self._start_boss_animation(self.hud_creature_kind)
                 elif action == "miss":
                     self.miss_flash = 0.12
@@ -947,6 +968,9 @@ class DuckHuntTkApp:
                 self.state = "game_over"
                 self.game_over_selected_index = 0
                 self.current_creature = None
+                self.extra_creatures = []
+                self.score_popups = []
+                self.pending_spawn_type = None
                 self.banner_text = "GAME OVER"
                 self.banner_timer = 3.0
                 self.last_message = ""
@@ -1007,6 +1031,85 @@ class DuckHuntTkApp:
         )
         self.hud_creature_kind = creature_type
 
+    def _spawn_creature_set(self, creature_type: str) -> None:
+        """Spawn main creature + extras based on current round."""
+        self.extra_creatures = []
+        self._spawn_creature(creature_type)
+        round_num = self.session.game.current_round
+        extra_count = 0
+        if round_num >= 10:
+            extra_count = 2
+        elif round_num >= 5:
+            extra_count = 1
+        for _ in range(extra_count):
+            self._spawn_extra_creature(creature_type)
+
+    def _spawn_extra_creature(self, creature_type: str) -> None:
+        """Spawn a bonus creature (not tracked by game_state) into extra_creatures."""
+        import random as _rnd
+
+        spec = self.config.creature_types.get(creature_type)
+        if spec is None:
+            spec = self.config.creature_types["duck"]
+            creature_type = "duck"
+        speed_factor = max(0.75, float(self.session.game.duck_speed) / 4.0)
+        base_speed = (115.0 + (spec.base_speed * 25.0)) * speed_factor
+        phase = _rnd.random() * math.tau
+        side = _rnd.randint(0, 3)
+        if side <= 1:  # bottom
+            move_right = bool(_rnd.randint(0, 1))
+            x = float(_rnd.randint(42, WINDOW_WIDTH - spec.width - 42))
+            y = float(WINDOW_HEIGHT + spec.height + _rnd.randint(20, 140))
+            vx = base_speed if move_right else -base_speed
+            vy = -float(_rnd.randint(150, 255)) * speed_factor
+            entering_from_bottom = True
+        elif side == 2:  # left
+            x = float(-spec.width - 20)
+            y = float(
+                _rnd.randint(
+                    TOP_MARGIN + 30, WINDOW_HEIGHT - BOTTOM_MARGIN - spec.height - 30
+                )
+            )
+            vx = base_speed
+            vy = float(_rnd.randint(-80, 80)) * speed_factor
+            entering_from_bottom = False
+        else:  # right
+            x = float(WINDOW_WIDTH + 20)
+            y = float(
+                _rnd.randint(
+                    TOP_MARGIN + 30, WINDOW_HEIGHT - BOTTOM_MARGIN - spec.height - 30
+                )
+            )
+            vx = -base_speed
+            vy = float(_rnd.randint(-80, 80)) * speed_factor
+            entering_from_bottom = False
+        self.extra_creatures.append(
+            CreatureSprite(
+                kind=creature_type,
+                movement_type=spec.movement_type,
+                width=spec.width,
+                height=spec.height,
+                x=x,
+                y=y,
+                vx=vx,
+                vy=vy,
+                phase=phase,
+                entering_from_bottom=entering_from_bottom,
+            )
+        )
+
+    def _add_score_popup(self, points: int, pos: tuple[int, int]) -> None:
+        """Queue a score popup that floats upward and fades."""
+        self.score_popups.append(
+            {
+                "text": f"+{points}",
+                "x": float(pos[0]),
+                "y": float(pos[1]),
+                "timer": 1.4,
+                "max_timer": 1.4,
+            }
+        )
+
     def _spawn_blood_effect(self, x: float, y: float) -> None:
         """Create a blood effect at the given position."""
         if not self.blood_effect_surfaces:
@@ -1015,15 +1118,28 @@ class DuckHuntTkApp:
         self.blood_effects.append(effect)
 
     def _shoot_at(self, mouse_pos: tuple[int, int]) -> None:
+        self._play_sfx("duck_shot")
+        self.audio.play_sound("shoot", 0.85)
+
+        # Check bonus (extra) creatures first — they award points without game_state shots
+        for extra in list(self.extra_creatures):
+            if extra.rect().collidepoint(mouse_pos):
+                self.extra_creatures.remove(extra)
+                self._spawn_blood_effect(float(mouse_pos[0]), float(mouse_pos[1]))
+                bonus_pts = 75
+                self.session.game.total_score += bonus_pts
+                self._add_score_popup(bonus_pts, mouse_pos)
+                self.hit_flash = 0.10
+                self.total_kills += 1
+                if self.total_kills % 3 == 0 and self.boss_anim_state == "idle":
+                    self._start_boss_animation(self.hud_creature_kind)
+                return
+
         if self.current_creature is None:
             return
 
-        self._play_sfx("duck_shot")
-
         hit = self.current_creature.rect().collidepoint(mouse_pos)
         action = "hit" if hit else "miss"
-
-        self.audio.play_sound("shoot", 0.85)
 
         try:
             events = self.runtime.perform_action(action)
@@ -1050,6 +1166,9 @@ class DuckHuntTkApp:
         self.blood_effects = []
         self.total_kills = 0
         self.boss_anim_state = "idle"
+        self.pending_spawn_type = None
+        self.extra_creatures = []
+        self.score_popups = []
         self._enter_map_selector()
 
     def _start_boss_animation(self, creature_kind: str) -> None:
@@ -1059,7 +1178,7 @@ class DuckHuntTkApp:
         self.boss_anim_timer = 0.0
         self.boss_anim_y = float(WINDOW_HEIGHT + 20)
 
-    _BOSS_RISE_TARGET = WINDOW_HEIGHT - 220  # visible peek-y position
+    _BOSS_RISE_TARGET = WINDOW_HEIGHT - 390  # visible peek-y position (above HUD)
     _BOSS_RISE_SPEED = 480.0  # px/s going up
     _BOSS_HOLD_TIME = 1.3  # seconds on screen
     _BOSS_FALL_SPEED = 520.0  # px/s going down
@@ -1079,6 +1198,11 @@ class DuckHuntTkApp:
             self.boss_anim_y += self._BOSS_FALL_SPEED * dt
             if self.boss_anim_y >= WINDOW_HEIGHT + 20:
                 self.boss_anim_state = "idle"
+                # Flush any creature spawn that was deferred while boss was active
+                if self.pending_spawn_type is not None:
+                    pending = self.pending_spawn_type
+                    self.pending_spawn_type = None
+                    self._spawn_creature_set(pending)
 
     def _toggle_fullscreen(self) -> None:
         self.is_fullscreen = not self.is_fullscreen
@@ -1173,6 +1297,24 @@ class DuckHuntTkApp:
 
         if self.current_creature is not None and self.session.game.creature_active:
             self.current_creature.update(dt, WINDOW_WIDTH, WINDOW_HEIGHT)
+
+        # Update extra (bonus) creatures and prune off-screen ones
+        alive_extras = []
+        for extra in self.extra_creatures:
+            extra.update(dt, WINDOW_WIDTH, WINDOW_HEIGHT)
+            cx, cy = extra.x, extra.y
+            if (-300 < cx < WINDOW_WIDTH + 300) and (-300 < cy < WINDOW_HEIGHT + 300):
+                alive_extras.append(extra)
+        self.extra_creatures = alive_extras
+
+        # Decay score popups
+        updated_popups = []
+        for popup in self.score_popups:
+            popup["timer"] -= dt
+            popup["y"] -= 38.0 * dt  # float upward
+            if popup["timer"] > 0.0:
+                updated_popups.append(popup)
+        self.score_popups = updated_popups
 
     def _render(self) -> None:
         if self.state == "intro":
@@ -1605,6 +1747,10 @@ class DuckHuntTkApp:
         if self.current_creature is not None:
             self._draw_creature(self.current_creature)
 
+        # Draw extra (bonus) creatures
+        for extra in self.extra_creatures:
+            self._draw_creature(extra)
+
         # Draw blood effects
         self._draw_blood_effects()
 
@@ -1629,6 +1775,20 @@ class DuckHuntTkApp:
             self.screen.blit(flash, (0, 0))
 
         self.screen.blit(self.scanline_overlay, (0, 0))
+
+        # Score popups: float upward, white, fade out
+        for popup in self.score_popups:
+            ratio = popup["timer"] / popup["max_timer"]
+            alpha = int(255 * min(1.0, ratio * 2))
+            surf = self.hud_font.render(popup["text"], True, (255, 255, 255))
+            surf.set_alpha(alpha)
+            rx = int(popup["x"]) - surf.get_width() // 2
+            ry = int(popup["y"]) - surf.get_height() // 2
+            # Subtle shadow for readability
+            shadow = self.hud_font.render(popup["text"], True, (30, 30, 30))
+            shadow.set_alpha(alpha)
+            self.screen.blit(shadow, (rx + 2, ry + 2))
+            self.screen.blit(surf, (rx, ry))
 
         # Boss animation (drawn on top of scanline, below crosshair)
         if self.boss_anim_state != "idle":

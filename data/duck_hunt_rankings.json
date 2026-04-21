@@ -35,6 +35,13 @@
     "game_mode": "classic"
   },
   {
+    "player_name": "no",
+    "score": 623,
+    "round": 6,
+    "map_index": 3,
+    "game_mode": "classic"
+  },
+  {
     "player_name": "Player",
     "score": 506,
     "round": 9,
@@ -117,6 +124,13 @@
     "round": 5,
     "map_index": 3,
     "game_mode": "classic"
+  },
+  {
+    "player_name": "no",
+    "score": 123,
+    "round": 4,
+    "map_index": 1,
+    "game_mode": "futuristic"
   },
   {
     "player_name": "papoi",
