@@ -63,6 +63,40 @@ class TestGameState(unittest.TestCase):
             self.game.duck_speed, initial_speed + self.config.speed_increase_per_round
         )
 
+    def test_selected_map_from_context_is_used(self) -> None:
+        selected_map_index = 2
+        self.game.start_new_game(
+            2024,
+            2025,
+            context={"map_index": selected_map_index},
+        )
+
+        self.assertEqual(self.game.current_map_index, selected_map_index)
+        self.assertEqual(
+            self.game.current_map_name,
+            self.config.maps[selected_map_index].name,
+        )
+
+    def test_map_stays_fixed_after_round_progression(self) -> None:
+        selected_map_index = 4
+        self.game.start_new_game(
+            13579,
+            24680,
+            context={"map_index": selected_map_index},
+        )
+
+        for _ in range(self.config.ducks_per_round):
+            self.game.spawn_next_creature()
+            result = self.game.record_hit()
+
+        self.assertEqual(result.result, "round_completed")
+        self.assertEqual(self.game.current_round, 2)
+        self.assertEqual(self.game.current_map_index, selected_map_index)
+        self.assertEqual(
+            self.game.current_map_name,
+            self.config.maps[selected_map_index].name,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

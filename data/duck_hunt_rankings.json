@@ -54,6 +54,12 @@
     "map_index": 2
   },
   {
+    "player_name": "blandon",
+    "score": 3,
+    "round": 1,
+    "map_index": 5
+  },
+  {
     "player_name": "Player",
     "score": 0,
     "round": 1,
@@ -64,5 +70,11 @@
     "score": 0,
     "round": 1,
     "map_index": 2
+  },
+  {
+    "player_name": "blandon",
+    "score": 0,
+    "round": 1,
+    "map_index": 5
   }
 ]

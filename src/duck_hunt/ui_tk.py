@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -144,6 +145,9 @@ class DuckHuntTkApp:
         ]
 
         self.player_name_input = ""
+        self.name_entry_text_center = (600, 435)
+        self.name_entry_shadow_offset = (2, 2)
+        self.name_entry_hint_center = (640, 574)
         self.name_confirm_rect = pygame.Rect(0, 0, 0, 0)
         self.name_back_rect = pygame.Rect(0, 0, 0, 0)
         self.instructions_back_rect = pygame.Rect(0, 0, 0, 0)
@@ -154,6 +158,7 @@ class DuckHuntTkApp:
         self.pending_seed_b = 0
         self.selected_map_index = 0
         self.map_selector_rng = RNG()
+        self.map_selector_random = random.SystemRandom()
         self.map_carousel_running = False
         self.map_carousel_position = 0.0
         self.map_carousel_start_pos = 0.0
@@ -161,6 +166,10 @@ class DuckHuntTkApp:
         self.map_carousel_target_index = 0
         self.map_carousel_elapsed_ms = 0
         self.map_carousel_duration_ms = 0
+        self.map_selector_phase = "idle"
+        self.map_selector_phase_elapsed_ms = 0
+        self.map_selector_hold_ms = 1700
+        self.map_selector_started_game = False
 
     def _load_font(self, size: int) -> pygame.font.Font:
         font_path = self.repo_root / self.config.fonts["game_font"]
@@ -526,6 +535,7 @@ class DuckHuntTkApp:
 
     def _on_map_selector_click(self, mouse_pos: tuple[int, int]) -> None:
         del mouse_pos
+        return
 
     def _on_instructions_click(self, mouse_pos: tuple[int, int]) -> None:
         if self.instructions_back_rect.collidepoint(mouse_pos):
@@ -536,36 +546,8 @@ class DuckHuntTkApp:
             self._go_to_menu()
 
     def _on_map_selector_keydown(self, event: pygame.event.Event) -> None:
-        if event.key == pygame.K_ESCAPE:
-            self.state = "name_entry"
-            self.map_carousel_running = False
-            return
-
-        if self.map_carousel_running:
-            if event.key == pygame.K_SPACE:
-                self._start_map_roulette()
-            return
-
-        if event.key in {pygame.K_LEFT, pygame.K_UP}:
-            self.selected_map_index = (self.selected_map_index - 1) % len(
-                self.config.maps
-            )
-            self.map_carousel_position = float(self.selected_map_index)
-            return
-
-        if event.key in {pygame.K_RIGHT, pygame.K_DOWN, pygame.K_TAB}:
-            self.selected_map_index = (self.selected_map_index + 1) % len(
-                self.config.maps
-            )
-            self.map_carousel_position = float(self.selected_map_index)
-            return
-
-        if event.key == pygame.K_SPACE:
-            self._start_map_roulette()
-            return
-
-        if event.key == pygame.K_RETURN:
-            self._start_game_from_map_selector()
+        del event
+        return
 
     def _on_menu_click(self, mouse_pos: tuple[int, int]) -> None:
         for idx, option_id in enumerate(self.menu_option_order):
@@ -599,6 +581,9 @@ class DuckHuntTkApp:
         self.state = "map_selector"
         self.map_carousel_running = False
         self.map_carousel_elapsed_ms = 0
+        self.map_selector_phase = "spinning"
+        self.map_selector_phase_elapsed_ms = 0
+        self.map_selector_started_game = False
 
         context = {
             "version": 1,
@@ -609,7 +594,7 @@ class DuckHuntTkApp:
         }
         self.map_selector_rng.set_seeds(self.pending_seed_a, self.pending_seed_b)
         self.map_selector_rng.derive_seed_c(context)
-        self.selected_map_index = self.map_selector_rng.randint(
+        self.selected_map_index = self.map_selector_random.randint(
             0, len(self.config.maps) - 1
         )
         self.map_carousel_position = float(self.selected_map_index)
@@ -622,10 +607,10 @@ class DuckHuntTkApp:
             self.map_carousel_running = False
             return
 
-        self.map_carousel_target_index = self.map_selector_rng.randint(
+        self.map_carousel_target_index = self.map_selector_random.randint(
             0, total_maps - 1
         )
-        extra_loops = self.map_selector_rng.randint(3, 5)
+        extra_loops = self.map_selector_random.randint(3, 5)
 
         start_pos = self.map_carousel_position
         start_mod = start_pos % total_maps
@@ -635,7 +620,7 @@ class DuckHuntTkApp:
         self.map_carousel_start_pos = start_pos
         self.map_carousel_end_pos = start_pos + total_delta
         self.map_carousel_elapsed_ms = 0
-        self.map_carousel_duration_ms = self.map_selector_rng.randint(2400, 3400)
+        self.map_carousel_duration_ms = self.map_selector_random.randint(4600, 6200)
         self.map_carousel_running = True
 
     def _start_game_from_map_selector(self) -> None:
@@ -656,6 +641,7 @@ class DuckHuntTkApp:
             )
         except Exception as exc:
             self.last_message = f"Cannot start game: {exc}"
+            self.state = "name_entry"
             return
 
         self.state = "playing"
@@ -793,6 +779,17 @@ class DuckHuntTkApp:
                 self.map_carousel_running = False
                 self.selected_map_index = self.map_carousel_target_index
                 self.map_carousel_position = float(self.selected_map_index)
+                self.map_selector_phase = "locked"
+                self.map_selector_phase_elapsed_ms = 0
+
+        if self.state == "map_selector" and self.map_selector_phase == "locked":
+            self.map_selector_phase_elapsed_ms += dt_ms
+            if (
+                not self.map_selector_started_game
+                and self.map_selector_phase_elapsed_ms >= self.map_selector_hold_ms
+            ):
+                self.map_selector_started_game = True
+                self._start_game_from_map_selector()
 
         if self.banner_timer > 0.0:
             self.banner_timer = max(0.0, self.banner_timer - dt)
@@ -959,15 +956,19 @@ class DuckHuntTkApp:
         player_text = self.player_name_input or "_"
         name_surface = self.hud_font.render(player_text, True, (236, 225, 204))
         name_shadow = self.hud_font.render(player_text, True, (18, 12, 10))
-        name_rect = name_surface.get_rect(center=(640, 362))
-        shadow_rect = name_shadow.get_rect(center=(642, 364))
+        text_center_x, text_center_y = self.name_entry_text_center
+        shadow_offset_x, shadow_offset_y = self.name_entry_shadow_offset
+        name_rect = name_surface.get_rect(center=(text_center_x, text_center_y))
+        shadow_rect = name_shadow.get_rect(
+            center=(text_center_x + shadow_offset_x, text_center_y + shadow_offset_y)
+        )
         self.screen.blit(name_shadow, shadow_rect)
         self.screen.blit(name_surface, name_rect)
 
         hint = self.small_font.render(
             "ENTER para continuar | ESC para volver", True, (222, 223, 214)
         )
-        self.screen.blit(hint, hint.get_rect(center=(640, 574)))
+        self.screen.blit(hint, hint.get_rect(center=self.name_entry_hint_center))
         self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_map_selector(self) -> None:
@@ -993,19 +994,24 @@ class DuckHuntTkApp:
             self._draw_fallback_background(selected_map.name)
 
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-        overlay.fill((8, 6, 10, 168))
+        overlay.fill((6, 8, 12, 170))
         self.screen.blit(overlay, (0, 0))
 
-        title = self.title_font.render("SELECCION DE MAPA", True, (245, 214, 146))
-        title_shadow = self.title_font.render("SELECCION DE MAPA", True, (35, 11, 9))
-        self.screen.blit(title_shadow, title_shadow.get_rect(center=(642, 98)))
-        self.screen.blit(title, title.get_rect(center=(640, 96)))
+        title = self.title_font.render("RULETA DE ZONAS", True, (226, 214, 190))
+        title_shadow = self.title_font.render("RULETA DE ZONAS", True, (23, 18, 16))
+        self.screen.blit(title_shadow, title_shadow.get_rect(center=(642, 134)))
+        self.screen.blit(title, title.get_rect(center=(640, 132)))
 
         center_x = WINDOW_WIDTH // 2
-        center_y = 350
-        spacing = 290
+        center_y = 364
+        spacing = 250
         base_index = int(math.floor(self.map_carousel_position))
         frac = self.map_carousel_position - base_index
+
+        # Clip carousel rendering to avoid visual overflow without a visible frame.
+        viewport = pygame.Rect(120, 212, 1040, 330)
+        previous_clip = self.screen.get_clip()
+        self.screen.set_clip(viewport)
 
         for slot in range(-4, 5):
             virtual_index = base_index + slot
@@ -1015,11 +1021,11 @@ class DuckHuntTkApp:
             if dist > 4.6:
                 continue
 
-            scale = max(0.54, 1.0 - (dist * 0.16))
+            scale = max(0.52, 1.0 - (dist * 0.15))
             if dist < 0.35:
-                scale += 0.16 * (1.0 - (dist / 0.35))
+                scale += 0.14 * (1.0 - (dist / 0.35))
 
-            alpha = max(65, 255 - int(dist * 95))
+            alpha = max(58, 255 - int(dist * 92))
             x = int(center_x + (rel * spacing))
 
             card_base = self.map_preview_cache.get(map_idx)
@@ -1039,29 +1045,33 @@ class DuckHuntTkApp:
 
             self.screen.blit(card, card_rect)
 
-            border_color = (255, 219, 150) if dist < 0.5 else (152, 70, 60)
+            border_color = (212, 58, 52) if dist < 0.5 else (96, 100, 112)
             border_width = 3 if dist < 0.5 else 1
             pygame.draw.rect(
                 self.screen, border_color, card_rect, border_width, border_radius=10
             )
+
+        self.screen.set_clip(previous_clip)
 
         arrow = [
             (center_x, 190),
             (center_x - 18, 158),
             (center_x + 18, 158),
         ]
-        pygame.draw.polygon(self.screen, (255, 220, 149), arrow)
-        pygame.draw.polygon(self.screen, (86, 31, 28), arrow, 2)
+        pygame.draw.polygon(self.screen, (216, 69, 61), arrow)
+        pygame.draw.polygon(self.screen, (78, 22, 20), arrow, 2)
 
-        map_surface = self.body_font.render(selected_map.name, True, (255, 231, 188))
-        self.screen.blit(map_surface, map_surface.get_rect(center=(640, 515)))
+        map_surface = self.body_font.render(selected_map.name, True, (240, 225, 201))
+        self.screen.blit(map_surface, map_surface.get_rect(center=(640, 544)))
 
-        hint = self.small_font.render(
-            "ENTER confirmar | ESPACIO relanzar | FLECHAS ajustar | ESC volver",
-            True,
-            (224, 224, 214),
-        )
-        self.screen.blit(hint, hint.get_rect(center=(640, 548)))
+        if self.map_selector_phase == "locked":
+            flash = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            flash_alpha = max(0, 145 - int(self.map_selector_phase_elapsed_ms * 0.22))
+            flash.fill((224, 48, 43, flash_alpha))
+            self.screen.blit(flash, (0, 0))
+
+            lock_msg = self.body_font.render("MAPA CONFIRMADO", True, (255, 195, 179))
+            self.screen.blit(lock_msg, lock_msg.get_rect(center=(640, 602)))
 
         self.screen.blit(self.scanline_overlay, (0, 0))
 
@@ -1266,46 +1276,108 @@ class DuckHuntTkApp:
         pygame.draw.rect(self.screen, horizon, pygame.Rect(0, 360, WINDOW_WIDTH, 170))
         pygame.draw.rect(self.screen, ground, pygame.Rect(0, 520, WINDOW_WIDTH, 200))
 
+    def _draw_metal_frame(self, rect: pygame.Rect) -> None:
+        panel = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        panel.fill((28, 31, 36, 226))
+        self.screen.blit(panel, rect.topleft)
+
+        pygame.draw.rect(self.screen, (122, 129, 139), rect, 3, border_radius=12)
+        inner = rect.inflate(-12, -12)
+        pygame.draw.rect(self.screen, (66, 72, 81), inner, 2, border_radius=10)
+
+        rivets = [
+            (rect.x + 16, rect.y + 16),
+            (rect.right - 16, rect.y + 16),
+            (rect.x + 16, rect.bottom - 16),
+            (rect.right - 16, rect.bottom - 16),
+        ]
+        for x, y in rivets:
+            pygame.draw.circle(self.screen, (156, 162, 172), (x, y), 5)
+            pygame.draw.circle(self.screen, (65, 69, 77), (x, y), 2)
+
+    def _draw_shell_icon(self, x: int, y: int, active: bool) -> None:
+        body_color = (208, 67, 57) if active else (84, 53, 52)
+        cap_color = (236, 181, 125) if active else (113, 95, 92)
+        outline = (28, 18, 18)
+
+        body = pygame.Rect(x, y, 16, 30)
+        pygame.draw.rect(self.screen, body_color, body, border_radius=3)
+        pygame.draw.rect(self.screen, outline, body, 1, border_radius=3)
+
+        cap = pygame.Rect(x + 1, y + 22, 14, 8)
+        pygame.draw.rect(self.screen, cap_color, cap, border_radius=2)
+        pygame.draw.rect(self.screen, outline, cap, 1, border_radius=2)
+
     def _draw_hud(self) -> None:
         status = self.runtime.status()
 
-        top_bar = pygame.Rect(0, 0, WINDOW_WIDTH, 58)
-        pygame.draw.rect(self.screen, (8, 11, 16), top_bar)
-        pygame.draw.line(self.screen, (190, 153, 81), (0, 58), (WINDOW_WIDTH, 58), 2)
+        left_panel = pygame.Rect(18, WINDOW_HEIGHT - 114, 302, 96)
+        center_panel = pygame.Rect(489, WINDOW_HEIGHT - 114, 302, 96)
+        right_panel = pygame.Rect(WINDOW_WIDTH - 320, WINDOW_HEIGHT - 114, 302, 96)
 
-        score_line = (
-            f"Player: {status['player_name'] or 'Player'}    "
-            f"Round: {status['round']}    "
-            f"Score: {status['score']}    "
-            f"Shots: {status['shots_remaining']}"
+        for panel in [left_panel, center_panel, right_panel]:
+            panel_surface = pygame.Surface((panel.width, panel.height), pygame.SRCALPHA)
+            panel_surface.fill((18, 12, 14, 204))
+            self.screen.blit(panel_surface, panel.topleft)
+            pygame.draw.rect(self.screen, (116, 74, 71), panel, 2, border_radius=8)
+            pygame.draw.rect(
+                self.screen,
+                (60, 33, 33),
+                panel.inflate(-8, -8),
+                1,
+                border_radius=7,
+            )
+
+        label_color = (188, 82, 78)
+        digit_color = (235, 76, 64)
+        digit_shadow = (32, 8, 7)
+
+        round_label = self.small_font.render("RONDA", True, label_color)
+        self.screen.blit(round_label, (left_panel.x + 16, left_panel.y + 12))
+
+        round_text = f"{int(status['round']):02d}"
+        round_shadow = self.hud_font.render(round_text, True, digit_shadow)
+        round_surface = self.hud_font.render(round_text, True, digit_color)
+        self.screen.blit(round_shadow, (left_panel.x + 18, left_panel.y + 38))
+        self.screen.blit(round_surface, (left_panel.x + 16, left_panel.y + 36))
+
+        bullets_label = self.small_font.render("BALAS", True, label_color)
+        self.screen.blit(bullets_label, (left_panel.x + 126, left_panel.y + 12))
+
+        max_shells = int(self.config.shots_per_duck)
+        shots_left = max(0, min(max_shells, int(status["shots_remaining"])))
+        shell_x = left_panel.x + 124
+        shell_y = left_panel.y + 46
+        for idx in range(max_shells):
+            self._draw_shell_icon(shell_x + (idx * 22), shell_y, idx < shots_left)
+
+        objectives_label = self.small_font.render("OBJETIVOS", True, label_color)
+        self.screen.blit(objectives_label, (center_panel.x + 16, center_panel.y + 12))
+
+        objectives_done = max(
+            0, min(int(self.config.ducks_per_round), int(status["ducks_caught"]))
         )
-        score_surface = self.hud_font.render(score_line, True, (234, 228, 212))
-        self.screen.blit(score_surface, (18, 14))
-
-        map_surface = self.small_font.render(
-            f"Map: {status['current_map']}", True, (231, 199, 128)
-        )
-        self.screen.blit(map_surface, (WINDOW_WIDTH - map_surface.get_width() - 20, 20))
-
-        bottom_bar = pygame.Rect(0, WINDOW_HEIGHT - 46, WINDOW_WIDTH, 46)
-        pygame.draw.rect(self.screen, (11, 15, 20), bottom_bar)
-        pygame.draw.line(
-            self.screen,
-            (106, 141, 164),
-            (0, WINDOW_HEIGHT - 46),
-            (WINDOW_WIDTH, WINDOW_HEIGHT - 46),
-            1,
-        )
-
-        controls = "LMB: Shoot    ESC: Back to menu"
-        controls_surface = self.small_font.render(controls, True, (173, 204, 230))
-        self.screen.blit(controls_surface, (18, WINDOW_HEIGHT - 34))
-
-        msg_surface = self.small_font.render(self.last_message, True, (255, 231, 153))
+        objectives_total = int(self.config.ducks_per_round)
+        objectives_text = f"{objectives_done:02d}/{objectives_total:02d}"
+        objectives_shadow = self.hud_font.render(objectives_text, True, digit_shadow)
+        objectives_surface = self.hud_font.render(objectives_text, True, digit_color)
         self.screen.blit(
-            msg_surface,
-            (WINDOW_WIDTH - msg_surface.get_width() - 18, WINDOW_HEIGHT - 34),
+            objectives_shadow,
+            (center_panel.x + 18, center_panel.y + 44),
         )
+        self.screen.blit(
+            objectives_surface,
+            (center_panel.x + 16, center_panel.y + 42),
+        )
+
+        score_label = self.small_font.render("SCORE", True, label_color)
+        self.screen.blit(score_label, (right_panel.x + 16, right_panel.y + 12))
+
+        score_text = f"{int(status['score']):05d}"
+        score_shadow = self.hud_font.render(score_text, True, digit_shadow)
+        score_surface = self.hud_font.render(score_text, True, digit_color)
+        self.screen.blit(score_shadow, (right_panel.x + 18, right_panel.y + 44))
+        self.screen.blit(score_surface, (right_panel.x + 16, right_panel.y + 42))
 
     def _draw_creature(self, creature: CreatureSprite) -> None:
         rect = creature.rect()

@@ -34,6 +34,7 @@ class GameState:
 
         self.current_map_index = 0
         self.current_map_name = "---"
+        self.fixed_map_index: int | None = None
 
     def start_new_game(
         self, seed_a: int, seed_b: int, context: dict | None = None
@@ -48,19 +49,15 @@ class GameState:
                 if 0 <= raw_map_index < len(self.config.maps):
                     preferred_map_index = raw_map_index
 
+        if preferred_map_index is None and self.config.maps:
+            preferred_map_index = self.rng.randint(0, len(self.config.maps) - 1)
+
         self.current_round = 1
         self.total_score = 0
         self.duck_speed = self.config.initial_duck_speed
         self.game_active = True
 
-        self.config.generate_random_map_queue(self.rng)
-        if preferred_map_index is not None:
-            remaining = [
-                index
-                for index in self.config.random_map_queue
-                if index != preferred_map_index
-            ]
-            self.config.random_map_queue = [preferred_map_index, *remaining]
+        self.fixed_map_index = preferred_map_index
         self._change_map_for_round()
         self._reset_round_counters()
 
@@ -71,8 +68,18 @@ class GameState:
         self.creature_active = False
 
     def _change_map_for_round(self) -> None:
-        game_map = self.config.get_next_random_map(self.current_round, self.rng)
-        self.current_map_index = self.config.maps.index(game_map)
+        if not self.config.maps:
+            self.current_map_index = 0
+            self.current_map_name = "---"
+            return
+
+        if self.fixed_map_index is not None:
+            game_map = self.config.maps[self.fixed_map_index]
+            self.current_map_index = self.fixed_map_index
+        else:
+            game_map = self.config.get_next_random_map(self.current_round, self.rng)
+            self.current_map_index = self.config.maps.index(game_map)
+
         self.current_map_name = game_map.name
 
     def spawn_next_creature(self) -> str:
