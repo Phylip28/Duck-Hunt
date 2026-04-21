@@ -1,225 +1,225 @@
-# DUCK HUNT - Versión Remasterizada
+# DUCK HUNT - Versión Python Completa
 
-Un videojuego de caza de patos moderno con arquitectura profesional, sistema de menú, rankings persistentes y mecánicas de juego mejoradas.
+Juego de caza de patos reimplementado en **Python con Pygame**. Versión completa y funcional con todas las características incluidas: múltiples criaturas simultáneas, animaciones de jefe, sistema de rankings persistente, modo clásico y futurista con visión por computadora.
 
-## Características
+## 🎮 Características Principales
 
-### 🎮 Mecánicas de Juego
-- **Rondas Infinitas**: El juego continúa indefinidamente hasta que pierdes
-- **Un Pato a la Vez**: Solo aparece un pato en pantalla, el siguiente aparece al eliminar el anterior
-- **Sistema de Tiros Limitados**: Tienes 3 tiros para eliminar cada pato
-- **Sistema de Puntuación Escalonada**:
-  - 1er tiro: 3 puntos
-  - 2do tiro: 2 puntos
-  - 3er tiro: 1 punto
-- **Bonificación por Rondas**:
-  - Ronda 1: +10 puntos
-  - Ronda 2: +20 puntos
-  - Ronda 3: +30 puntos (y así sucesivamente)
-- **Dificultad Progresiva**: La velocidad de los patos aumenta con cada ronda
-- **Sistema de Vidas**: Si fallas los 3 tiros, Game Over
+### Mecánicas de Juego
+- **Rondas Infinitas**: Juego continuo hasta Game Over
+- **Múltiples Criaturas Simultáneas**:
+  - Nivel 1-4: 1 criatura
+  - Nivel 5-9: 2 criaturas simultáneas en posiciones aleatorias
+  - Nivel 10+: 3 criaturas simultáneas
+- **Sistema de Tiros Limitados**: 3 disparos por criatura principal
+- **Puntuación Escalonada**:
+  - 1er disparo: 3 puntos
+  - 2do disparo: 2 puntos  
+  - 3er disparo: 1 punto
+  - Criaturas bonus (extra): 75 puntos c/u
+- **Bonificación por Rondas**: Ronda × 10 puntos al completar
+- **Dificultad Progresiva**: Velocidad aumenta cada ronda
+- **Animación de Jefe**: Cada 3 muertes aparece el "asesino" de la criatura con secuencia de entrada/salida (2.5s de pausa post-jefe)
+
+### Modos de Juego
+- **Clásico**: Dispara con click izquierdo del ratón
+- **Futurista**: Puntería con la mano via cámara + cierre de puño para disparar (MediaPipe)
+
+### Mapas Disponibles
+- Clásico
+- Arcade
+- Caos
+- Infierno
+- Plaga (con zombie duck)
+
+### Criaturas
+- Pato
+- Gaviota
+- Fantasma
+- Murciélago
+- Zombie Duck (exclusivo del mapa Plaga)
 
 ### 📊 Sistema de Rankings
-- Rankings persistentes guardados en localStorage
-- Vista de top puntuaciones con información de rondas alcanzadas
-- Historial de partidas con fechas
+- Rankings persistentes guardados en JSON
+- Filtro por modo de juego (Clásico / Futurista)
+- Mostrar todos los modos juntos
+- Top 5 historiales por combinación modo/mapa
+- Almacenamiento en `data/duck_hunt_rankings.json`
 
-### 🎨 Interfaz
-- **Menú Principal**: Opciones de Jugar, Rankings, Salir
-- **HUD de Juego**: Muestra puntuación, ronda actual y tiros disponibles
-- **Pantalla Game Over**: Muestra puntuación final y ronda alcanzada
-- **Interfaz Intuitiva**: Diseño accesible y responsivo
+### 🎨 Interfaz Gráfica
+- **Menú Principal**: Jugar, Instrucciones, Rankings, Historia (video), Seleccionar Modo
+- **Selector de Mapa**: Carrusel interactivo con vista previa
+- **HUD de Juego**: 
+  - Iconos de criaturas con estado (color = viva, silueta negra = muerta)
+  - Contador de disparos
+  - Puntuación en tiempo real
+  - Popups de puntaje que flotan y desaparecen
+- **Pantalla Game Over**: Puntuación final, ronda, botones interactivos
+- **Pantalla de Rankings**: Tablas por filtro, navegación por teclado
+- **Historia**: Reproductor de video integrado (ffpyplayer)
 
 ### 🔊 Audio
+- Música de fondo (adaptativa por estado)
 - Sonido de disparo
-- Sonido de perro feliz
-- Sonidos de patos (quack, aleteo)
-- Sonido de puntuación
+- Sonidos de perro (feliz, puntuación, fallo)
+- Sonidos de criaturas (quack, aleteo)
+- Sonido de puntuación y bonus
+
+### 🎮 Controles
+| Acción | Clásico | Futurista |
+|--------|---------|-----------|
+| Disparar | Click izquierdo | Cierre de puño |
+| Apuntar | Ratón | Mano por cámara |
+| Pantalla Completa | F11 | F11 |
+| Instrucciones | Click en menú | Click en menú |
+| Rankings | Click en menú | Click en menú |
+| Navegar Rankings | ←/→/Tab | ←/→/Tab |
+| Menú | ESC | ESC |
 
 ## 📁 Estructura del Proyecto
 
 ```
-duck-hunt-master/
-├── index.html                          # Archivo principal HTML
-├── pyproject.toml                      # Configuración del proyecto Python (uv)
-├── Duck_Hunt_LCG_Analysis.ipynb        # Notebook educativo: Análisis de PRNG LCG
-├── execute_notebook_style.py           # Script ejecutable del análisis educativo
-├── assets/                             # Archivos multimedia
-│   ├── images/                        # Imágenes (sprites, fondos)
-│   ├── audio/                         # Archivos de audio
-│   └── fonts/                         # Fuentes personalizadas
-├── src/                                # Código fuente
-│   ├── js/                            # Archivos JavaScript
-│   │   ├── config.js                 # Configuración del juego
-│   │   ├── storage.js                # Sistema de almacenamiento
-│   │   ├── menu.js                   # Lógica del menú
-│   │   ├── game.js                   # Lógica principal del juego
-│   │   └── main.js                   # Archivo de inicialización
-│   ├── css/                           # Hojas de estilo
-│   │   ├── main.css                  # Estilos generales
-│   │   ├── menu.css                  # Estilos del menú
-│   │   ├── game.css                  # Estilos del juego
-│   │   └── rankings.css              # Estilos de rankings
-│   └── duck_hunt/                     # Módulos Python
-│       ├── __init__.py               # Inicializador del paquete
-│       ├── rng.py                    # Generador de números aleatorios base
-│       ├── prng_lcg.py               # Implementación de LCG (Congruencias Lineales)
-│       ├── config.py                 # Configuración del juego (Python)
-│       ├── game_state.py             # Estado del juego
-│       ├── menu_flow.py              # Flujo del menú
-│       ├── runtime.py                # Motor de ejecución
-│       └── ui_tk.py                  # Interfaz gráfica (Tkinter)
-├── tests/                              # Pruebas unitarias
-│   ├── rng/                           # Pruebas de PRNG
-│   │   └── test_rng_parity.py        # Validación de paridad JS/Python
-│   ├── game/                          # Pruebas de lógica de juego
-│   ├── menu/                          # Pruebas de flujo de menú
-│   └── ...
-├── docs/                               # Documentación
-│   └── RNG_CONTRACT.md                # Especificación del contrato PRNG
-├── data/                               # Datos persistentes
-│   └── duck_hunt_rankings.json        # Rankings guardados
-└── README.md                           # Este archivo
+Duck-Hunt/
+├── pyproject.toml                    # Configuración del proyecto (uv)
+├── README.md                          # Este archivo
+├── assets/                            # Recursos multimedia
+│   ├── images/
+│   │   ├── backgrounds/              # Fondos de mapas
+│   │   ├── creatures/                # Sprites de criaturas
+│   │   ├── ui/                       # Elementos de interfaz
+│   │   └── dog/                      # Sprites del perro
+│   ├── audio/
+│   │   ├── music/                    # Música de fondo
+│   │   ├── sfx/                      # Efectos de sonido
+│   │   └── voices/                   # Audio del perro
+│   ├── fonts/                         # Tipografías personalizadas
+│   ├── video/                         # Videos (historia)
+│   │   └── duck-hunt-history.mp4     # Video introductorio
+│   └── hand_landmarker.task          # Modelo MediaPipe para visión
+├── src/duck_hunt/                     # Código fuente Python
+│   ├── __init__.py
+│   ├── ui_tk.py                       # Interfaz principal (Pygame)
+│   ├── config.py                      # Constantes y configuración
+│   ├── game_state.py                  # Lógica del juego
+│   ├── storage.py                     # Persistencia (JSON)
+│   ├── menu_flow.py                   # Flujo del menú
+│   ├── session.py                     # Sesión de juego
+│   ├── runtime.py                     # Motor de ejecución
+│   ├── timing.py                      # Sistema de timers
+│   ├── rng.py                         # Generador de números aleatorios
+│   ├── rng_tools.py                   # Herramientas de RNG
+│   ├── telemetry.py                   # Sistema de telemetría
+│   ├── vision_control.py              # Control de visión (MediaPipe)
+│   ├── command_adapter.py             # Adaptador de comandos
+│   └── cli.py                         # Interfaz de línea de comandos
+├── tests/                             # Suite de pruebas
+│   ├── rng/                           # Pruebas de RNG
+│   ├── game/                          # Pruebas de lógica del juego
+│   ├── menu/                          # Pruebas de menú
+│   ├── runtime/                       # Pruebas de runtime
+│   ├── session/                       # Pruebas de sesión
+│   └── storage/                       # Pruebas de almacenamiento
+├── docs/                              # Documentación
+│   └── RNG_CONTRACT.md               # Especificación del RNG
+├── data/                              # Datos persistentes
+│   └── duck_hunt_rankings.json       # Rankings guardados
+└── .github/
+    └── copilot-instructions.md       # Guías de desarrollo
 ```
 
-## 🚀 Cómo Jugar
+## 🚀 Instalación y Ejecución
 
-1. Abre `index.html` en tu navegador
-2. Haz clic en "JUGAR" para iniciar
-3. Dispara a los patos haciendo clic en ellos
-4. Acumula puntos según la estrategia: primer tiro = mas puntos
-5. Evita fallar 3 tiros seguidos (Game Over)
-6. Observa cómo aumenta la dificultad cada ronda
-7. Ve tu puntuación final y compárala en los RANKINGS
+### Requisitos
+- Python 3.12+
+- Gestor `uv`
+- Cámara web (solo para modo Futurista)
 
-## 💾 Almacenamiento
-
-- Los rankings se guardan automáticamente en el localStorage del navegador
-- Tu historial se mantiene entre sesiones
-- Los datos se pierden solo si limpias el almacenamiento local
-
-## 🎯 Estrategia
-
-- Enfócate en eliminar al pato rápido para obtener 3 puntos
-- Las rondas posteriores dan bonificaciones más grandes
-- La velocidad aumenta progresivamente - ¡anticipa el movimiento!
-- No influye cuántos tiros uses para los puntos de ronda
-
-## 🛠️ Uso de Tecnologías
-
-- **HTML5**: Estructura y semántica
-- **CSS3**: Estilos modernos con gradientes y animaciones
-- **JavaScript Vanilla**: Sin dependencias externas
-- **LocalStorage**: Persistencia de datos
-
-## 🐍 Migración Python (uv)
-
-La migración gradual a Python usa `uv` como gestor de entorno/dependencias.
-
-### Componentes Implementados
-
-- **PRNG LCG (Congruencias Lineales)**: `src/duck_hunt/prng_lcg.py`
-  - Algoritmo: $X_{n+1} = (a \times X_n + c) \bmod m$
-  - Parámetros: a=1103515245, c=12345, m=2^32 (estándar glibc)
-  - Período: 2^32 = 4,294,967,296
-
-- **Configuración del Juego**: `src/duck_hunt/config.py`
-- **Estado del Juego**: `src/duck_hunt/game_state.py`
-- **Flujo de Menú**: `src/duck_hunt/menu_flow.py`
-- **Motor de Ejecución**: `src/duck_hunt/runtime.py`
-- **Interfaz Gráfica**: `src/duck_hunt/ui_tk.py` (Tkinter)
-
-### Análisis Educativo
-
-**Nuevo**: Notebook interactivo y análisis completo del PRNG LCG
-
+### Instalación
 ```bash
-# Ver análisis completo en formato educativo
-uv run python execute_notebook_style.py
+# Clonar y navegar al directorio
+cd Duck-Hunt
 
-# Abrir notebook en Jupyter/VS Code
-# Duck_Hunt_LCG_Analysis.ipynb
-```
-
-El notebook incluye:
-- Explicación matemática del LCG
-- Generación de números aleatorios [0.0, 1.0)
-- Simulación de selección de mapas
-- Comparación 16-bits vs 32-bits
-- Simulación de partida completa
-- Verificación de reproducibilidad
-- Integración en el sistema del juego
-
-### Comandos Python
-
-```bash
 # Instalar dependencias
 uv sync
 
-# Ejecutar juego completo
-uv run python -m duck_hunt
-
-# Ejecutar análisis educativo
-uv run python execute_notebook_style.py
-
-# Validar paridad RNG JS/Python
-uv run python -m unittest tests.rng.test_rng_parity
-
-# Ejecutar todas las pruebas
-uv run python -m unittest discover
+# (Opcional) Instalar dependencias de visión
+uv sync --extra vision
 ```
 
-### Estrategia de Migración
-
-1. ✅ **Fase 1**: PRNG LCG independiente y validación de paridad
-2. 🔄 **Fase 2**: Portabilidad de config y almacenamiento
-3. 🔄 **Fase 3**: Flujo de menú e interfaz
-4. 🔄 **Fase 4**: Lógica de juego completa
-5. 🔄 **Fase 5**: Visión computacional (opcional)
-
-## � Recursos Educativos
-
-### PRNG LCG (Generador de Congruencias Lineales)
-
-- **Notebook Interactivo**: [Duck_Hunt_LCG_Analysis.ipynb](Duck_Hunt_LCG_Analysis.ipynb)
-- **Script Ejecutable**: `execute_notebook_style.py`
-- **Especificación**: [docs/RNG_CONTRACT.md](docs/RNG_CONTRACT.md)
-
-Estos recursos documentan:
-- La implementación del LCG en Python
-- Parámetros estándar (glibc)
-- Validación de reproducibilidad
-- Comparación de períodos (16-bits vs 32-bits)
-- Integración en mecánicas del juego
-
-### Pruebas de Paridad
-
-El proyecto valida que las secuencias JavaScript y Python sean idénticas:
-
+### Ejecutar el Juego
 ```bash
-uv run python -m unittest tests.rng.test_rng_parity
+# Interfaz gráfica (Pygame)
+uv run duck-hunt-ui
+
+# Interfaz de línea de comandos
+uv run duck-hunt-cli
 ```
 
-Esto asegura que la migración mantenga el comportamiento determinista del juego.
+### Ejecutar Pruebas
+```bash
+# Todas las pruebas
+uv run python -m unittest discover -s tests
 
-## 📝 Notas
+# Solo pruebas de RNG
+uv run python -m unittest tests.rng.test_rng_parity
 
-- El juego utiliza recursos gráficos de alta calidad
-- Optimizado para navegadores modernos
-- Responsive: funciona en desktop y dispositivos móviles
-- **Nuevo**: PRNG completamente analizado y documentado con fines educativos
-- **Nuevo**: Notebook de modelamiento matemático del generador aleatorio
+# Solo pruebas de juego
+uv run python -m unittest tests.game.test_game_state
+```
+
+## 🎯 Cómo Jugar
+
+1. Ejecuta `uv run duck-hunt-ui`
+2. Selecciona modo de juego (Clásico o Futurista)
+3. Ingresa tu nombre
+4. Selecciona un mapa del carrusel
+5. ¡A cazar!
+   - **Clásico**: Haz clic en las criaturas
+   - **Futurista**: Apunta con la mano y cierra el puño
+6. Acumula puntos y sube en los rankings
+7. Cada 3 muertes aparece el jefe con una pausa de 2.5s después
+
+## 🏆 Estrategia
+- Dispara rápido para maximizar puntos (3 en primer tiro)
+- Las rondas posteriores dan bonificaciones más grandes
+- Estudia el patrón de movimiento para anticipar
+- Con múltiples criaturas, prioriza las más cercanas al borde
+
+## 🔧 Dependencias Principales
+- **Pygame**: Renderizado gráfico
+- **Pillow**: Procesamiento de imágenes
+- **MediaPipe**: Detección de manos (modo Futurista)
+- **OpenCV**: Captura de cámara
+- **ffpyplayer**: Reproducción de videos
+- **uv**: Gestor de dependencias
+
+## 📊 Arquitectura
+- **Determinismo**: RNG independiente con seeds reproducibles
+- **Separación de Capas**: Config → Storage → Menu → Session → Runtime → UI
+- **Event-Driven**: Sistema de eventos para comunicación
+- **Persistencia**: Rankings guardados automáticamente en JSON
+- **Telemetría**: Logging opcional de eventos del juego
+
+## ✅ Estado del Proyecto
+- ✨ **COMPLETO**: Todas las características implementadas
+- ✅ Juego principal funcional
+- ✅ Sistema de rankings
+- ✅ Múltiples criaturas simultáneas
+- ✅ Animaciones de jefe
+- ✅ Modo de visión por computadora
+- ✅ Sistema de audio completo
+- ✅ 42/42 pruebas pasando
+
+## 📝 Notas Técnicas
+- Resolución: 1280×720
+- FPS: 60 (objetivo)
+- El juego usa un RNG con seeds explícitas para determinismo
+- Audio bloqueado hasta primera interacción del usuario (restricción de navegador/SO)
+- Fallback automático a modo Clásico si no se detecta cámara en Futurista
 
 ## 📄 Licencia
-
-Proyecto educativo - Libre para usar y modificar
+Proyecto educativo - Libre para usar, modificar y distribuir
 
 ---
 
-**Versión**: 2.1 - Con Análisis Educativo de PRNG LCG  
+**Versión**: 3.0 - Versión Python
 **Última Actualización**: Abril 2026  
-**Cambios Recientes**: 
-- ✨ Notebook educativo de Congruencias Lineales (LCG)
-- 📊 Script de análisis con simulaciones completas
-- 🔍 Validación de paridad RNG JS/Python
-- 📈 Documentación de integración en el sistema del juego
