@@ -196,7 +196,7 @@ class DuckHuntTkApp:
         return cache
 
     def _load_menu_background(self) -> pygame.Surface | None:
-        bg_path = self.repo_root / "assets/images/bg-menu.jpg"
+        bg_path = self.repo_root / "assets/images/backgrounds/bg-menu.jpg"
         if not bg_path.exists():
             return None
         try:
@@ -208,8 +208,8 @@ class DuckHuntTkApp:
     def _load_menu_blood_layers(self) -> list[pygame.Surface]:
         layers: list[pygame.Surface] = []
         for path in [
-            self.repo_root / "assets/images/blood.png",
-            self.repo_root / "assets/images/blood2.png",
+            self.repo_root / "assets/images/effects/blood.png",
+            self.repo_root / "assets/images/effects/blood2.png",
         ]:
             surface = self._load_surface(path)
             if surface is None:
@@ -219,8 +219,8 @@ class DuckHuntTkApp:
 
     def _load_dog_hunter_surface(self) -> pygame.Surface | None:
         candidates = [
-            self.repo_root / "assets/images/dog-duck1.png",
-            self.repo_root / "assets/images/dog-duck2.png",
+            self.repo_root / "assets/images/creatures/dog-duck1.png",
+            self.repo_root / "assets/images/creatures/dog-duck2.png",
         ]
         for path in candidates:
             surface = self._load_surface(path)
@@ -230,8 +230,8 @@ class DuckHuntTkApp:
 
     def _load_name_entry_illustration(self) -> pygame.Surface | None:
         candidates = [
-            self.repo_root / "assets/images/name_screeen.jpeg",
-            self.repo_root / "assets/images/ilustracion.png",
+            self.repo_root / "assets/images/ui/name_screeen.jpeg",
+            self.repo_root / "assets/images/ui/ilustracion.png",
         ]
         for path in candidates:
             image = self._load_surface(path)
@@ -260,7 +260,7 @@ class DuckHuntTkApp:
 
     def _load_creature_frames(self) -> dict[str, dict[str, list[pygame.Surface]]]:
         frames: dict[str, dict[str, list[pygame.Surface]]] = {}
-        base_dir = self.repo_root / "assets/images"
+        base_dir = self.repo_root / "assets/images/creatures"
 
         for creature_name, spec in self.config.creature_types.items():
             image_names = getattr(self.config, spec.image_names_key, None)
@@ -346,7 +346,7 @@ class DuckHuntTkApp:
 
     def _load_target_surface(self) -> pygame.Surface | None:
         candidates = [
-            self.repo_root / "assets/images/targeti.png",
+            self.repo_root / "assets/images/cursors/targeti.png",
             self.repo_root / self.config.images["target"],
         ]
 
@@ -1261,7 +1261,6 @@ class DuckHuntTkApp:
 
     def _draw_fallback_background(self, map_name: str) -> None:
         palette = {
-            "DEATH VALLEY": ((81, 120, 180), (38, 63, 123), (30, 85, 35)),
             "PLAGUE": ((86, 109, 69), (42, 70, 33), (40, 66, 30)),
             "DANGER ZONE": ((120, 84, 72), (72, 42, 35), (63, 78, 31)),
             "HAUNTED CASTLE": ((67, 79, 127), (28, 34, 67), (35, 55, 25)),

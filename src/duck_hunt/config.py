@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from .rng import RNG
 
@@ -67,42 +68,62 @@ class Config:
         self.speed_increase_per_round = 1.15
 
         self.maps = [
-            GameMap("DEATH VALLEY", "assets/images/bg-cloud.jpg"),
-            GameMap("PLAGUE", "assets/images/bg-plague.jpg"),
-            GameMap("DANGER ZONE", "assets/images/bg-nuclear.jpg"),
-            GameMap("HAUNTED CASTLE", "assets/images/bg-castle.jpg"),
-            GameMap("WITCH HOUSE", "assets/images/bg-moon.jpg"),
-            GameMap("GATE TO HELL", "assets/images/bg-volcano.jpg"),
-            GameMap("HELL", "assets/images/bg-hell.jpg"),
+            GameMap("PLAGUE", "assets/images/backgrounds/bg-plague.jpg"),
+            GameMap("DANGER ZONE", "assets/images/backgrounds/bg-nuclear.jpg"),
+            GameMap("HAUNTED CASTLE", "assets/images/backgrounds/bg-castle.jpg"),
+            GameMap("WITCH HOUSE", "assets/images/backgrounds/bg-moon.jpg"),
+            GameMap("GATE TO HELL", "assets/images/backgrounds/bg-volcano.jpg"),
+            GameMap("HELL", "assets/images/backgrounds/bg-hell.jpg"),
         ]
+
+        self.creature_rules_by_background = {
+            "bg-moon.jpg": ["bat"],
+            "bg-castle.jpg": ["ghost"],
+            "bg-hell.jpg": ["duck"],
+            "bg-volcano.jpg": ["duck"],
+            "bg-nuclear.jpg": ["seagull"],
+        }
 
         self.random_map_queue: list[int] = []
 
         self.sounds = {
-            "duck_shot": "assets/audio/duck-shot.mp3",
-            "duck_flap": "assets/audio/duck-flap.mp3",
-            "duck_quack": "assets/audio/duck-quack.mp3",
-            "dog_score": "assets/audio/dog-score.mp3",
-            "soundtrack": "assets/audio/soundtrack.mp3",
+            "duck_shot": "assets/audio/sfx/duck-shot.mp3",
+            "duck_flap": "assets/audio/sfx/duck-flap.mp3",
+            "duck_quack": "assets/audio/sfx/duck-quack.mp3",
+            "dog_score": "assets/audio/sfx/dog-score.mp3",
+            "soundtrack": "assets/audio/music/soundtrack.mp3",
         }
 
         self.images = {
-            "background": "assets/images/duckhunt-bg-4k.jpg",
-            "target": "assets/images/target.png",
-            "dog_happy_with_duck": "assets/images/dog-duck1.png",
-            "dog_sad": "assets/images/dog-duck2.png",
-            "duck_left": "assets/images/duck-left.gif",
-            "duck_right": "assets/images/duck-right.gif",
+            "background": "assets/images/backgrounds/duckhunt-bg-4k.jpg",
+            "target": "assets/images/targets/target.png",
+            "dog_happy_with_duck": "assets/images/creatures/dog-duck1.png",
+            "dog_sad": "assets/images/creatures/dog-duck2.png",
+            "duck_left": "assets/images/creatures/duck-left.gif",
+            "duck_right": "assets/images/creatures/duck-right.gif",
         }
 
         self.fonts = {"game_font": "assets/fonts/game-font.otf"}
 
-    def get_random_creature_type(self, rng: RNG) -> str:
-        if not self.available_creature_types:
-            raise RuntimeError("No creature types available")
+    def get_random_creature_type(self, rng: RNG, map_file: str | None = None) -> str:
+        allowed_types = self._allowed_creature_types_for_map(map_file)
+        index = rng.randint(0, len(allowed_types) - 1)
+        return allowed_types[index]
 
-        index = rng.randint(0, len(self.available_creature_types) - 1)
-        return self.available_creature_types[index]
+    def _allowed_creature_types_for_map(self, map_file: str | None) -> list[str]:
+        if map_file is None:
+            allowed = list(self.available_creature_types)
+        else:
+            background_name = Path(map_file).name
+            allowed = self.creature_rules_by_background.get(
+                background_name,
+                self.available_creature_types,
+            )
+
+        valid_allowed = [name for name in allowed if name in self.creature_types]
+        if not valid_allowed:
+            raise RuntimeError("No creature types available for map")
+        return valid_allowed
 
     def generate_random_map_queue(self, rng: RNG) -> list[int]:
         indices = list(range(len(self.maps)))
@@ -137,4 +158,4 @@ class Config:
             return 4
         if round_number <= 12:
             return 5
-        return 6
+        return 5

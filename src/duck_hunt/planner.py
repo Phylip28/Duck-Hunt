@@ -80,7 +80,8 @@ class DeterministicPlanner:
             game_map = self.config.get_next_random_map(round_number, rng)
             map_index = self.config.maps.index(game_map)
             creatures = [
-                self.config.get_random_creature_type(rng) for _ in range(per_round)
+                self.config.get_random_creature_type(rng, map_file=game_map.file)
+                for _ in range(per_round)
             ]
             rounds.append(
                 RoundPlan(

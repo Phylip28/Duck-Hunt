@@ -97,6 +97,33 @@ class TestGameState(unittest.TestCase):
             self.config.maps[selected_map_index].name,
         )
 
+    def test_map_specific_creature_rules(self) -> None:
+        map_expectations = {
+            "bg-moon.jpg": "bat",
+            "bg-castle.jpg": "ghost",
+            "bg-hell.jpg": "duck",
+            "bg-volcano.jpg": "duck",
+            "bg-nuclear.jpg": "seagull",
+        }
+
+        for background_file, expected_creature in map_expectations.items():
+            with self.subTest(background_file=background_file):
+                selected_map_index = next(
+                    idx
+                    for idx, game_map in enumerate(self.config.maps)
+                    if game_map.file.endswith(background_file)
+                )
+                self.game.start_new_game(
+                    2468,
+                    1357,
+                    context={"map_index": selected_map_index},
+                )
+
+                for _ in range(3):
+                    creature = self.game.spawn_next_creature()
+                    self.assertEqual(creature, expected_creature)
+                    self.game.record_hit()
+
 
 if __name__ == "__main__":
     unittest.main()

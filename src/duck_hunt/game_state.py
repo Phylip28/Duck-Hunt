@@ -91,7 +91,14 @@ class GameState:
         if self.current_duck_index >= self.config.ducks_per_round:
             raise RuntimeError("Round already completed")
 
-        creature_type = self.config.get_random_creature_type(self.rng)
+        map_file: str | None = None
+        if 0 <= self.current_map_index < len(self.config.maps):
+            map_file = self.config.maps[self.current_map_index].file
+
+        creature_type = self.config.get_random_creature_type(
+            self.rng,
+            map_file=map_file,
+        )
         self.shots_remaining = self.config.shots_per_duck
         self.creature_active = True
         return creature_type
