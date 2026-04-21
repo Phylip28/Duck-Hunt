@@ -13,6 +13,12 @@ dependencies = [
   "pygame>=2.6.0",
 ]
 
+[project.optional-dependencies]
+vision = [
+  "opencv-python>=4.10.0",
+  "mediapipe>=0.10.14",
+]
+
 [project.scripts]
 duck-hunt-cli = "duck_hunt.cli:main"
 duck-hunt-ui = "duck_hunt.ui_tk:main"

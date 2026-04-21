@@ -27,6 +27,7 @@ if __package__:
     from .runtime import GameRuntime
     from .session import Session
     from .storage import Storage
+    from .vision_control import HandVisionController
 else:
     # Allow `python src/duck_hunt/ui_tk.py` by adding `src` to sys.path.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -37,6 +38,7 @@ else:
     from duck_hunt.runtime import GameRuntime
     from duck_hunt.session import Session
     from duck_hunt.storage import Storage
+    from duck_hunt.vision_control import HandVisionController
 
 
 WINDOW_WIDTH = 1280
@@ -169,9 +171,22 @@ class DuckHuntTkApp:
 
         self.menu_pulse = 0.0
 
-        self.menu_option_order = ["play", "instructions", "rankings"]
+        self.menu_option_order = ["play", "instructions", "rankings", "game_mode"]
         self.menu_selected_index = 0
         self.menu_option_rects: dict[str, pygame.Rect] = {}
+
+        self.game_mode_options = [
+            ("classic", "Clasico"),
+            ("futuristic", "Futurista"),
+        ]
+        self.selected_game_mode_index = 0
+        self.active_game_mode_id = "classic"
+        self.vision_controller = HandVisionController(
+            WINDOW_WIDTH, WINDOW_HEIGHT, repo_root=self.repo_root
+        )
+        self.vision_cursor_pos = (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
+        self.vision_status_message = ""
+        self.futuristic_test_mode = True
 
         self.selected_seed_index = 0
         self.seed_presets = [
@@ -564,7 +579,12 @@ class DuckHuntTkApp:
                 elif self.state == "rankings":
                     self._on_rankings_click(event.pos)
                 elif self.state == "playing":
-                    self._shoot_at(event.pos)
+                    allow_mouse_shot = (
+                        self.active_game_mode_id == "classic"
+                        or self.futuristic_test_mode
+                    )
+                    if allow_mouse_shot:
+                        self._shoot_at(event.pos)
                 elif self.state == "game_over":
                     self._go_to_menu()
 
@@ -619,11 +639,30 @@ class DuckHuntTkApp:
             )
             return
 
+        current_option = self.menu_option_order[self.menu_selected_index]
+        if current_option == "game_mode" and event.key == pygame.K_LEFT:
+            self._cycle_game_mode(step=-1)
+            return
+
+        if current_option == "game_mode" and event.key == pygame.K_RIGHT:
+            self._cycle_game_mode(step=1)
+            return
+
         if event.key == pygame.K_RETURN:
             self._activate_menu_option(self.menu_option_order[self.menu_selected_index])
 
+    def _cycle_game_mode(self, step: int) -> None:
+        self.selected_game_mode_index = (self.selected_game_mode_index + step) % len(
+            self.game_mode_options
+        )
+        _, mode_label = self.game_mode_options[self.selected_game_mode_index]
+        self.last_message = f"Modo seleccionado: {mode_label}"
+
     def _activate_menu_option(self, option_id: str) -> None:
         if option_id == "play":
+            self.active_game_mode_id = self.game_mode_options[
+                self.selected_game_mode_index
+            ][0]
             self.state = "name_entry"
             self.last_message = "Ingresa tu nombre para comenzar"
             return
@@ -636,6 +675,10 @@ class DuckHuntTkApp:
         if option_id == "rankings":
             self.state = "rankings"
             self.last_message = "Rankings"
+            return
+
+        if option_id == "game_mode":
+            self._cycle_game_mode(step=1)
             return
 
     def _on_name_entry_keydown(self, event: pygame.event.Event) -> None:
@@ -778,6 +821,23 @@ class DuckHuntTkApp:
         self.banner_timer = 0.0
         self.hit_flash = 0.0
         self.miss_flash = 0.0
+        if self.active_game_mode_id == "futuristic":
+            self.vision_cursor_pos = (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
+            try:
+                started = self.vision_controller.start()
+            except Exception:
+                started = False
+            if not started:
+                self.last_message = (
+                    "No se pudo iniciar vision; juego en modo prueba normal"
+                )
+            elif self.futuristic_test_mode:
+                self.last_message = (
+                    "Modo Futurista Prueba: mouse activo + camara de depuracion"
+                )
+            self.vision_status_message = self.vision_controller.status
+        else:
+            self.vision_controller.stop()
         pygame.mouse.set_visible(False)
         self._process_runtime_events(events)
 
@@ -832,6 +892,7 @@ class DuckHuntTkApp:
                 self.banner_text = "GAME OVER"
                 self.banner_timer = 3.0
                 self.last_message = "Press ENTER to return to menu"
+                self.vision_controller.stop()
                 pygame.mouse.set_visible(True)
 
     def _spawn_creature(self, creature_type: str) -> None:
@@ -905,6 +966,7 @@ class DuckHuntTkApp:
         self.banner_timer = 0.0
         self.last_message = message or ""
         self.blood_effects = []
+        self.vision_controller.stop()
         pygame.mouse.set_visible(True)
         # Keep music playing in menu
         if not self.audio.music_playing:
@@ -966,6 +1028,13 @@ class DuckHuntTkApp:
             if effect.age < effect.lifetime:
                 updated_effects.append(effect)
         self.blood_effects = updated_effects
+
+        if self.state == "playing" and self.active_game_mode_id == "futuristic":
+            sample = self.vision_controller.update()
+            self.vision_cursor_pos = sample.cursor_pos
+            self.vision_status_message = sample.status
+            if sample.shoot:
+                self._shoot_at(self.vision_cursor_pos)
 
         if self.state != "playing":
             return
@@ -1046,17 +1115,25 @@ class DuckHuntTkApp:
             ("play", "Jugar", (WINDOW_WIDTH // 2, 248)),
             ("instructions", "Instrucciones", (WINDOW_WIDTH // 2, 300)),
             ("rankings", "Rankings", (WINDOW_WIDTH // 2, 352)),
+            (
+                "game_mode",
+                "Modo de juego: "
+                f"{self.game_mode_options[self.selected_game_mode_index][1]}",
+                (32, WINDOW_HEIGHT - 34),
+            ),
         ]
 
         for index, (option_id, label, position) in enumerate(options):
             selected = self.menu_selected_index == index
             color = (255, 229, 167) if selected else (226, 213, 194)
-            option_font = self.body_font
+            option_font = (
+                self.small_font if option_id == "game_mode" else self.body_font
+            )
             text = option_font.render(label, True, color)
             shadow = option_font.render(label, True, (36, 9, 8))
 
             if selected:
-                scale = 1.18
+                scale = 1.24 if option_id == "game_mode" else 1.18
                 text = pygame.transform.smoothscale(
                     text,
                     (
@@ -1072,12 +1149,18 @@ class DuckHuntTkApp:
                     ),
                 )
 
-            center_x, y = position
-            text_rect = text.get_rect(center=(center_x, y))
-            shadow_rect = shadow.get_rect(center=(center_x + 2, y + 2))
-            self.screen.blit(shadow, shadow_rect)
-            self.screen.blit(text, text_rect)
-            rect = text_rect
+            if option_id == "game_mode":
+                x, y = position
+                self.screen.blit(shadow, (x + 2, y + 2))
+                self.screen.blit(text, (x, y))
+                rect = pygame.Rect(x, y, text.get_width(), text.get_height())
+            else:
+                center_x, y = position
+                text_rect = text.get_rect(center=(center_x, y))
+                shadow_rect = shadow.get_rect(center=(center_x + 2, y + 2))
+                self.screen.blit(shadow, shadow_rect)
+                self.screen.blit(text, text_rect)
+                rect = text_rect
 
             self.menu_option_rects[option_id] = rect
 
@@ -1246,10 +1329,10 @@ class DuckHuntTkApp:
         self._draw_title_block("INSTRUCCIONES")
 
         lines = [
-            "1. Dispara con click izquierdo.",
+            "1. En Clasico dispara con click izquierdo.",
             "2. Cada objetivo tiene 3 disparos maximo.",
             "3. Si se acaban los disparos, termina la partida.",
-            "4. selecciona tu generador aleatorio favorito.",
+            "4. En Futurista apunta con la mano y cierra el puno para disparar.",
         ]
         base_y = 236
         for index, line in enumerate(lines):
@@ -1376,8 +1459,27 @@ class DuckHuntTkApp:
 
         self.screen.blit(self.scanline_overlay, (0, 0))
 
-        mouse_pos = pygame.mouse.get_pos()
-        self._draw_crosshair(mouse_pos)
+        if self.active_game_mode_id == "futuristic":
+            if self.futuristic_test_mode:
+                crosshair_pos = pygame.mouse.get_pos()
+                pygame.draw.circle(
+                    self.screen, (78, 237, 255), self.vision_cursor_pos, 18, 2
+                )
+                pygame.draw.circle(
+                    self.screen, (78, 237, 255), self.vision_cursor_pos, 3
+                )
+            else:
+                crosshair_pos = self.vision_cursor_pos
+            status_surface = self.small_font.render(
+                f"Modo futurista | {self.vision_status_message}",
+                True,
+                (200, 238, 248),
+            )
+            self.screen.blit(status_surface, (20, 20))
+        else:
+            crosshair_pos = pygame.mouse.get_pos()
+
+        self._draw_crosshair(crosshair_pos)
 
     def _is_high_score(self) -> bool:
         """Check if current game score is a high score (top 5)."""
@@ -1699,7 +1801,10 @@ class DuckHuntTkApp:
 
 def main() -> None:
     app = DuckHuntTkApp()
-    app.run()
+    try:
+        app.run()
+    finally:
+        app.vision_controller.stop()
 
 
 if __name__ == "__main__":
