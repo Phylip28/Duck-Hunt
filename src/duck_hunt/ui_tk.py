@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
-import random
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,7 +20,9 @@ except ModuleNotFoundError as exc:  # pragma: no cover - runtime dependency
     raise SystemExit("pygame is required. Run: uv sync") from exc
 
 if __package__:
+    from .audio import AudioManager
     from .config import Config
+    from .prng_lcg import LCG
     from .rng import RNG
     from .runtime import GameRuntime
     from .session import Session
@@ -28,7 +30,9 @@ if __package__:
 else:
     # Allow `python src/duck_hunt/ui_tk.py` by adding `src` to sys.path.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from duck_hunt.audio import AudioManager
     from duck_hunt.config import Config
+    from duck_hunt.prng_lcg import LCG
     from duck_hunt.rng import RNG
     from duck_hunt.runtime import GameRuntime
     from duck_hunt.session import Session
@@ -40,6 +44,17 @@ WINDOW_HEIGHT = 720
 FPS = 60
 TOP_MARGIN = 72
 BOTTOM_MARGIN = 132
+
+
+@dataclass
+class BloodEffect:
+    """Visual effect for hit impacts."""
+    x: float
+    y: float
+    lifetime: float = 0.6  # seconds
+    age: float = 0.0
+    scale: float = 1.0
+    rotation: float = 0.0
 
 
 @dataclass
@@ -114,10 +129,13 @@ class DuckHuntTkApp:
         self.runtime = GameRuntime(session=self.session)
 
         self.repo_root = Path(__file__).resolve().parents[2]
+        self.audio = AudioManager(self.repo_root)
         self.background_cache = self._load_background_cache()
         self.menu_background = self._load_menu_background()
         self.menu_blood_layers = self._load_menu_blood_layers()
+        self.blood_effect_surfaces = self._load_blood_effects()
         self.dog_hunter_surface = self._load_dog_hunter_surface()
+        self.dog_sad_surface = self._load_dog_sad_surface()
         self.name_entry_illustration = self._load_name_entry_illustration()
         self.map_preview_cache = self._build_map_preview_cache()
         self.creature_frames = self._load_creature_frames()
@@ -143,6 +161,7 @@ class DuckHuntTkApp:
         self.current_creature: CreatureSprite | None = None
         self.hit_flash = 0.0
         self.miss_flash = 0.0
+        self.blood_effects: list[BloodEffect] = []
 
         self.menu_pulse = 0.0
 
@@ -172,7 +191,11 @@ class DuckHuntTkApp:
         self.pending_seed_b = 0
         self.selected_map_index = 0
         self.map_selector_rng = RNG()
-        self.map_selector_random = random.SystemRandom()
+        # Initialize LCG PRNG with seed based on current time (microseconds)
+        # This ensures different random sequences on each run while maintaining
+        # the ability to control randomness through the game's RNG system
+        time_seed = int(time.time() * 1000000) % (2**32)
+        self.map_selector_lcg = LCG(time_seed)
         self.map_carousel_running = False
         self.map_carousel_position = 0.0
         self.map_carousel_start_pos = 0.0
@@ -184,6 +207,9 @@ class DuckHuntTkApp:
         self.map_selector_phase_elapsed_ms = 0
         self.map_selector_hold_ms = 1700
         self.map_selector_started_game = False
+        
+        # Start background music in menu
+        self.audio.play_music()
 
     def _init_audio(self) -> None:
         try:
@@ -296,6 +322,21 @@ class DuckHuntTkApp:
             layers.append(surface)
         return layers
 
+    def _load_blood_effects(self) -> list[pygame.Surface]:
+        """Load blood effect images for gameplay impacts."""
+        effects: list[pygame.Surface] = []
+        for path in [
+            self.repo_root / "assets/images/effects/blood.png",
+            self.repo_root / "assets/images/effects/blood2.png",
+        ]:
+            surface = self._load_surface(path)
+            if surface is None:
+                continue
+            # Scale down for gameplay effects
+            scaled = pygame.transform.smoothscale(surface, (80, 80))
+            effects.append(scaled)
+        return effects
+
     def _load_dog_hunter_surface(self) -> pygame.Surface | None:
         candidates = [
             self.repo_root / "assets/images/creatures/dog-duck1.png",
@@ -305,6 +346,19 @@ class DuckHuntTkApp:
             surface = self._load_surface(path)
             if surface is not None:
                 return surface
+        return None
+
+    def _load_dog_sad_surface(self) -> pygame.Surface | None:
+        """Load the sad dog image for game over screen."""
+        candidates = [
+            self.repo_root / self.config.images.get("dog_sad"),
+            self.repo_root / "assets/images/creatures/dog-duck2.png",
+        ]
+        for path in candidates:
+            if path and path.exists():
+                surface = self._load_surface(path)
+                if surface is not None:
+                    return surface
         return None
 
     def _load_name_entry_illustration(self) -> pygame.Surface | None:
@@ -673,7 +727,8 @@ class DuckHuntTkApp:
         }
         self.map_selector_rng.set_seeds(self.pending_seed_a, self.pending_seed_b)
         self.map_selector_rng.derive_seed_c(context)
-        self.selected_map_index = self.map_selector_random.randint(
+        # Use LCG PRNG for truly random map selection
+        self.selected_map_index = self.map_selector_lcg.randint(
             0, len(self.config.maps) - 1
         )
         self.map_carousel_position = float(self.selected_map_index)
@@ -686,10 +741,11 @@ class DuckHuntTkApp:
             self.map_carousel_running = False
             return
 
-        self.map_carousel_target_index = self.map_selector_random.randint(
+        # Use LCG PRNG for roulette animation variation
+        self.map_carousel_target_index = self.map_selector_lcg.randint(
             0, total_maps - 1
         )
-        extra_loops = self.map_selector_random.randint(3, 5)
+        extra_loops = self.map_selector_lcg.randint(3, 5)
 
         start_pos = self.map_carousel_position
         start_mod = start_pos % total_maps
@@ -699,7 +755,8 @@ class DuckHuntTkApp:
         self.map_carousel_start_pos = start_pos
         self.map_carousel_end_pos = start_pos + total_delta
         self.map_carousel_elapsed_ms = 0
-        self.map_carousel_duration_ms = self.map_selector_random.randint(4600, 6200)
+        # Use LCG PRNG for timing variation
+        self.map_carousel_duration_ms = self.map_selector_lcg.randint(4600, 6200)
         self.map_carousel_running = True
 
     def _start_game_from_map_selector(self) -> None:
@@ -730,7 +787,6 @@ class DuckHuntTkApp:
         self.hit_flash = 0.0
         self.miss_flash = 0.0
         pygame.mouse.set_visible(False)
-        self._ensure_music()
         self._process_runtime_events(events)
 
     def _process_runtime_events(self, events: list[object]) -> None:
@@ -761,8 +817,10 @@ class DuckHuntTkApp:
                     self.hit_flash = 0.12
                     self._play_sfx("dog_score")
                     self.last_message = f"Hit! +{points}"
+                    self.audio.play_sound("score", 0.8)
                 elif action == "miss":
                     self.miss_flash = 0.12
+                    self.audio.play_sound("quack", 0.7)
                     if result == "game_over":
                         self.last_message = "No shots left"
                     else:
@@ -774,6 +832,7 @@ class DuckHuntTkApp:
                 next_round = int(payload.get("next_round", 1))
                 self.banner_text = f"Round clear! Bonus +{bonus} | Round {next_round}"
                 self.banner_timer = 1.8
+                self.audio.play_sound("score", 0.9)
 
             elif event_type == "game_over":
                 self.state = "game_over"
@@ -812,6 +871,13 @@ class DuckHuntTkApp:
             entering_from_bottom=True,
         )
 
+    def _spawn_blood_effect(self, x: float, y: float) -> None:
+        """Create a blood effect at the given position."""
+        if not self.blood_effect_surfaces:
+            return
+        effect = BloodEffect(x=x, y=y)
+        self.blood_effects.append(effect)
+
     def _shoot_at(self, mouse_pos: tuple[int, int]) -> None:
         if self.current_creature is None:
             return
@@ -821,11 +887,17 @@ class DuckHuntTkApp:
         hit = self.current_creature.rect().collidepoint(mouse_pos)
         action = "hit" if hit else "miss"
 
+        self.audio.play_sound("shoot", 0.85)
+
         try:
             events = self.runtime.perform_action(action)
         except Exception as exc:
             self.last_message = f"Action error: {exc}"
             return
+
+        # Create blood effect at hit location
+        if hit:
+            self._spawn_blood_effect(float(mouse_pos[0]), float(mouse_pos[1]))
 
         if not hit and self.current_creature is not None:
             # Keep moving target if the creature survives the miss.
@@ -840,7 +912,11 @@ class DuckHuntTkApp:
         self.banner_text = ""
         self.banner_timer = 0.0
         self.last_message = message or ""
+        self.blood_effects = []
         pygame.mouse.set_visible(True)
+        # Keep music playing in menu
+        if not self.audio.music_playing:
+            self.audio.play_music()
 
         if self.session.game.game_active:
             self.session.stop_game_and_return_to_menu()
@@ -884,6 +960,14 @@ class DuckHuntTkApp:
 
         if self.miss_flash > 0.0:
             self.miss_flash = max(0.0, self.miss_flash - dt)
+
+        # Update blood effects
+        updated_effects: list[BloodEffect] = []
+        for effect in self.blood_effects:
+            effect.age += dt
+            if effect.age < effect.lifetime:
+                updated_effects.append(effect)
+        self.blood_effects = updated_effects
 
         if self.state != "playing":
             return
@@ -1271,6 +1355,9 @@ class DuckHuntTkApp:
         if self.current_creature is not None:
             self._draw_creature(self.current_creature)
 
+        # Draw blood effects
+        self._draw_blood_effects()
+
         if self.banner_timer > 0.0 and self.banner_text:
             banner = self.body_font.render(self.banner_text, True, (255, 219, 122))
             banner_bg = pygame.Rect(
@@ -1296,6 +1383,22 @@ class DuckHuntTkApp:
         mouse_pos = pygame.mouse.get_pos()
         self._draw_crosshair(mouse_pos)
 
+    def _is_high_score(self) -> bool:
+        """Check if current game score is a high score (top 5)."""
+        status = self.runtime.status()
+        current_score = int(status.get("score", 0))
+        
+        # Get top 5 rankings
+        rows = self.session.menu.get_rankings_view(limit=5)
+        
+        # If no rankings yet, it's a high score
+        if not rows:
+            return True
+        
+        # Check if current score is better than the lowest top 5 score
+        lowest_top_score = rows[-1].score if rows else 0
+        return current_score >= lowest_top_score
+
     def _draw_game_over(self) -> None:
         self._draw_map_background()
         self._draw_hud()
@@ -1303,6 +1406,21 @@ class DuckHuntTkApp:
         overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 170))
         self.screen.blit(overlay, (0, 0))
+
+        # Choose dog based on score: happy for high scores, sad for low scores
+        is_high_score = self._is_high_score()
+        dog_surface = self.dog_hunter_surface if is_high_score else self.dog_sad_surface
+
+        # Draw the hunting dog (happy if high score, sad if not)
+        if dog_surface is not None:
+            dog_scale = (550, 420)
+            dog = pygame.transform.smoothscale(dog_surface, dog_scale)
+            dog = pygame.transform.flip(dog, True, False)
+            dog_pos = (680, 240)
+            dog_shadow = dog.copy()
+            dog_shadow.fill((0, 0, 0, 180), special_flags=pygame.BLEND_RGBA_MULT)
+            self.screen.blit(dog_shadow, (dog_pos[0] + 14, dog_pos[1] + 14))
+            self.screen.blit(dog, dog_pos)
 
         title = self.title_font.render("GAME OVER", True, (255, 138, 120))
         self.screen.blit(title, (WINDOW_WIDTH // 2 - title.get_width() // 2, 132))
@@ -1317,23 +1435,30 @@ class DuckHuntTkApp:
             score_line, (WINDOW_WIDTH // 2 - score_line.get_width() // 2, 220)
         )
 
+        # Show special message if high score
+        if is_high_score:
+            high_score_msg = self.body_font.render("🏆 HIGH SCORE! 🏆", True, (255, 215, 0))
+            self.screen.blit(
+                high_score_msg, (WINDOW_WIDTH // 2 - high_score_msg.get_width() // 2, 270)
+            )
+
         rows = self.session.menu.get_rankings_view(limit=5)
         top_label = self.body_font.render("Top Rankings", True, (255, 223, 144))
         self.screen.blit(
-            top_label, (WINDOW_WIDTH // 2 - top_label.get_width() // 2, 286)
+            top_label, (60, 286)
         )
 
         for idx, row in enumerate(rows):
             line = f"{row.rank}. {row.player_name} - {row.score}"
             surf = self.small_font.render(line, True, (223, 237, 255))
             self.screen.blit(
-                surf, (WINDOW_WIDTH // 2 - surf.get_width() // 2, 328 + (idx * 28))
+                surf, (60, 328 + (idx * 28))
             )
 
         hint = self.small_font.render(
             "ENTER or ESC to return to menu", True, (224, 224, 224)
         )
-        self.screen.blit(hint, (WINDOW_WIDTH // 2 - hint.get_width() // 2, 540))
+        self.screen.blit(hint, (WINDOW_WIDTH // 2 - hint.get_width() // 2, 620))
         self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_map_background(self) -> None:
@@ -1520,6 +1645,37 @@ class DuckHuntTkApp:
         eye_center = (rect.right - 26, rect.y + 28)
         pygame.draw.circle(self.screen, (255, 255, 255), eye_center, 7)
         pygame.draw.circle(self.screen, (18, 19, 22), eye_center, 3)
+
+    def _draw_blood_effects(self) -> None:
+        """Render all active blood effects."""
+        for effect in self.blood_effects:
+            if not self.blood_effect_surfaces:
+                continue
+
+            # Progress from 0 to 1
+            progress = effect.age / effect.lifetime
+            # Fade out effect
+            alpha = int(255 * (1.0 - progress))
+
+            # Select a blood surface (cycle through available)
+            surface_idx = int(effect.age * 5) % len(self.blood_effect_surfaces)
+            base_surface = self.blood_effect_surfaces[surface_idx]
+
+            # Scale effect: start at 1.0, grow to 1.5, then fade
+            scale = 1.0 + (progress * 0.5)
+            scaled_size = int(80 * scale)
+            scaled_surface = pygame.transform.smoothscale(
+                base_surface, (scaled_size, scaled_size)
+            )
+
+            # Set alpha
+            scaled_surface.set_alpha(alpha)
+
+            # Draw centered on effect position
+            rect = scaled_surface.get_rect(
+                center=(int(effect.x), int(effect.y))
+            )
+            self.screen.blit(scaled_surface, rect)
 
     def _draw_crosshair(self, mouse_pos: tuple[int, int]) -> None:
         x, y = mouse_pos
