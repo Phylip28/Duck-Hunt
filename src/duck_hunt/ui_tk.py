@@ -44,11 +44,13 @@ WINDOW_HEIGHT = 720
 FPS = 60
 TOP_MARGIN = 72
 BOTTOM_MARGIN = 132
+INTRO_DURATION_SECONDS = 4.0
 
 
 @dataclass
 class BloodEffect:
     """Visual effect for hit impacts."""
+
     x: float
     y: float
     lifetime: float = 0.6  # seconds
@@ -136,6 +138,7 @@ class DuckHuntTkApp:
         self.blood_effect_surfaces = self._load_blood_effects()
         self.dog_hunter_surface = self._load_dog_hunter_surface()
         self.dog_sad_surface = self._load_dog_sad_surface()
+        self.intro_surface = self._load_intro_surface()
         self.name_entry_illustration = self._load_name_entry_illustration()
         self.map_preview_cache = self._build_map_preview_cache()
         self.creature_frames = self._load_creature_frames()
@@ -153,7 +156,8 @@ class DuckHuntTkApp:
         self.body_font = self._load_font(22)
         self.small_font = self._load_font(18)
 
-        self.state = "menu"
+        self.state = "intro"
+        self.intro_timer = INTRO_DURATION_SECONDS
         self.last_message = "Selecciona una opcion"
         self.banner_text = ""
         self.banner_timer = 0.0
@@ -165,7 +169,7 @@ class DuckHuntTkApp:
 
         self.menu_pulse = 0.0
 
-        self.menu_option_order = ["play", "instructions", "rankings", "seed"]
+        self.menu_option_order = ["play", "instructions", "rankings"]
         self.menu_selected_index = 0
         self.menu_option_rects: dict[str, pygame.Rect] = {}
 
@@ -207,8 +211,9 @@ class DuckHuntTkApp:
         self.map_selector_phase_elapsed_ms = 0
         self.map_selector_hold_ms = 1700
         self.map_selector_started_game = False
-        
-        # Start background music in menu
+
+        # Start background music from the presentation screen.
+        self._ensure_music()
         self.audio.play_music()
 
     def _init_audio(self) -> None:
@@ -371,6 +376,13 @@ class DuckHuntTkApp:
             if image is not None:
                 return image
         return None
+
+    def _load_intro_surface(self) -> pygame.Surface | None:
+        path = self.repo_root / "assets/images/ui/intro.png"
+        image = self._load_surface(path)
+        if image is None:
+            return None
+        return pygame.transform.smoothscale(image, (WINDOW_WIDTH, WINDOW_HEIGHT))
 
     def _build_map_preview_cache(self) -> dict[int, pygame.Surface]:
         previews: dict[int, pygame.Surface] = {}
@@ -607,19 +619,6 @@ class DuckHuntTkApp:
             )
             return
 
-        current_option = self.menu_option_order[self.menu_selected_index]
-        if current_option == "seed" and event.key == pygame.K_LEFT:
-            self.selected_seed_index = (self.selected_seed_index - 1) % len(
-                self.seed_presets
-            )
-            return
-
-        if current_option == "seed" and event.key == pygame.K_RIGHT:
-            self.selected_seed_index = (self.selected_seed_index + 1) % len(
-                self.seed_presets
-            )
-            return
-
         if event.key == pygame.K_RETURN:
             self._activate_menu_option(self.menu_option_order[self.menu_selected_index])
 
@@ -637,13 +636,6 @@ class DuckHuntTkApp:
         if option_id == "rankings":
             self.state = "rankings"
             self.last_message = "Rankings"
-            return
-
-        if option_id == "seed":
-            self.selected_seed_index = (self.selected_seed_index + 1) % len(
-                self.seed_presets
-            )
-            self.last_message = ""
             return
 
     def _on_name_entry_keydown(self, event: pygame.event.Event) -> None:
@@ -925,6 +917,12 @@ class DuckHuntTkApp:
         self.menu_pulse += dt
         self._ensure_music()
 
+        if self.state == "intro":
+            self.intro_timer = max(0.0, self.intro_timer - dt)
+            if self.intro_timer <= 0.0:
+                self.state = "menu"
+            return
+
         if self.state == "map_selector" and self.map_carousel_running:
             self.map_carousel_elapsed_ms += dt_ms
 
@@ -978,7 +976,9 @@ class DuckHuntTkApp:
             self.current_creature.update(dt, WINDOW_WIDTH, WINDOW_HEIGHT)
 
     def _render(self) -> None:
-        if self.state == "menu":
+        if self.state == "intro":
+            self._draw_intro()
+        elif self.state == "menu":
             self._draw_menu()
         elif self.state == "name_entry":
             self._draw_name_entry()
@@ -994,6 +994,13 @@ class DuckHuntTkApp:
             self._draw_game_over()
 
         pygame.display.flip()
+
+    def _draw_intro(self) -> None:
+        if self.intro_surface is not None:
+            self.screen.blit(self.intro_surface, (0, 0))
+        else:
+            self.screen.fill((8, 8, 12))
+        self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_menu(self) -> None:
         self.menu_option_rects = {}
@@ -1039,22 +1046,17 @@ class DuckHuntTkApp:
             ("play", "Jugar", (WINDOW_WIDTH // 2, 248)),
             ("instructions", "Instrucciones", (WINDOW_WIDTH // 2, 300)),
             ("rankings", "Rankings", (WINDOW_WIDTH // 2, 352)),
-            (
-                "seed",
-                f"Seleccionar generador: {self.seed_presets[self.selected_seed_index][0]}",
-                (32, WINDOW_HEIGHT - 34),
-            ),
         ]
 
         for index, (option_id, label, position) in enumerate(options):
             selected = self.menu_selected_index == index
             color = (255, 229, 167) if selected else (226, 213, 194)
-            option_font = self.small_font if option_id == "seed" else self.body_font
+            option_font = self.body_font
             text = option_font.render(label, True, color)
             shadow = option_font.render(label, True, (36, 9, 8))
 
             if selected:
-                scale = 1.24 if option_id == "seed" else 1.18
+                scale = 1.18
                 text = pygame.transform.smoothscale(
                     text,
                     (
@@ -1070,18 +1072,12 @@ class DuckHuntTkApp:
                     ),
                 )
 
-            if option_id == "seed":
-                x, y = position
-                self.screen.blit(shadow, (x + 2, y + 2))
-                self.screen.blit(text, (x, y))
-                rect = pygame.Rect(x, y, text.get_width(), text.get_height())
-            else:
-                center_x, y = position
-                text_rect = text.get_rect(center=(center_x, y))
-                shadow_rect = shadow.get_rect(center=(center_x + 2, y + 2))
-                self.screen.blit(shadow, shadow_rect)
-                self.screen.blit(text, text_rect)
-                rect = text_rect
+            center_x, y = position
+            text_rect = text.get_rect(center=(center_x, y))
+            shadow_rect = shadow.get_rect(center=(center_x + 2, y + 2))
+            self.screen.blit(shadow, shadow_rect)
+            self.screen.blit(text, text_rect)
+            rect = text_rect
 
             self.menu_option_rects[option_id] = rect
 
@@ -1387,14 +1383,14 @@ class DuckHuntTkApp:
         """Check if current game score is a high score (top 5)."""
         status = self.runtime.status()
         current_score = int(status.get("score", 0))
-        
+
         # Get top 5 rankings
         rows = self.session.menu.get_rankings_view(limit=5)
-        
+
         # If no rankings yet, it's a high score
         if not rows:
             return True
-        
+
         # Check if current score is better than the lowest top 5 score
         lowest_top_score = rows[-1].score if rows else 0
         return current_score >= lowest_top_score
@@ -1437,23 +1433,22 @@ class DuckHuntTkApp:
 
         # Show special message if high score
         if is_high_score:
-            high_score_msg = self.body_font.render("🏆 HIGH SCORE! 🏆", True, (255, 215, 0))
+            high_score_msg = self.body_font.render(
+                "🏆 HIGH SCORE! 🏆", True, (255, 215, 0)
+            )
             self.screen.blit(
-                high_score_msg, (WINDOW_WIDTH // 2 - high_score_msg.get_width() // 2, 270)
+                high_score_msg,
+                (WINDOW_WIDTH // 2 - high_score_msg.get_width() // 2, 270),
             )
 
         rows = self.session.menu.get_rankings_view(limit=5)
         top_label = self.body_font.render("Top Rankings", True, (255, 223, 144))
-        self.screen.blit(
-            top_label, (60, 286)
-        )
+        self.screen.blit(top_label, (60, 286))
 
         for idx, row in enumerate(rows):
             line = f"{row.rank}. {row.player_name} - {row.score}"
             surf = self.small_font.render(line, True, (223, 237, 255))
-            self.screen.blit(
-                surf, (60, 328 + (idx * 28))
-            )
+            self.screen.blit(surf, (60, 328 + (idx * 28)))
 
         hint = self.small_font.render(
             "ENTER or ESC to return to menu", True, (224, 224, 224)
@@ -1672,9 +1667,7 @@ class DuckHuntTkApp:
             scaled_surface.set_alpha(alpha)
 
             # Draw centered on effect position
-            rect = scaled_surface.get_rect(
-                center=(int(effect.x), int(effect.y))
-            )
+            rect = scaled_surface.get_rect(center=(int(effect.x), int(effect.y)))
             self.screen.blit(scaled_surface, rect)
 
     def _draw_crosshair(self, mouse_pos: tuple[int, int]) -> None:
