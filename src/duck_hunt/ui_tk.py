@@ -938,13 +938,15 @@ class DuckHuntTkApp:
                     self._play_sfx("dog_score")
                     self.last_message = f"Hit! +{points}"
                     self.audio.play_sound("score", 0.8)
-                    # Score popup at creature position
+                    # Score popup at creature position, then clear it immediately
                     if self.current_creature is not None:
                         cx = int(
                             self.current_creature.x + self.current_creature.width / 2
                         )
                         cy = int(self.current_creature.y)
                         self._add_score_popup(points, (cx, cy))
+                    # Remove the killed main creature from view right away
+                    self.current_creature = None
                     self.total_kills += 1
                     if self.total_kills % 3 == 0 and self.boss_anim_state == "idle":
                         self._start_boss_animation(self.hud_creature_kind)
@@ -1177,6 +1179,9 @@ class DuckHuntTkApp:
         self.boss_anim_state = "rising"
         self.boss_anim_timer = 0.0
         self.boss_anim_y = float(WINDOW_HEIGHT + 20)
+        # Clear any leftover creatures so nothing remains visible during boss sequence
+        self.extra_creatures = []
+        self.current_creature = None
 
     _BOSS_RISE_TARGET = WINDOW_HEIGHT - 390  # visible peek-y position (above HUD)
     _BOSS_RISE_SPEED = 480.0  # px/s going up
@@ -1197,6 +1202,12 @@ class DuckHuntTkApp:
         elif self.boss_anim_state == "falling":
             self.boss_anim_y += self._BOSS_FALL_SPEED * dt
             if self.boss_anim_y >= WINDOW_HEIGHT + 20:
+                # Boss fully hidden — enter post-boss pause before re-spawning
+                self.boss_anim_state = "post_delay"
+                self.boss_anim_timer = 0.0
+        elif self.boss_anim_state == "post_delay":
+            self.boss_anim_timer += dt
+            if self.boss_anim_timer >= 2.5:
                 self.boss_anim_state = "idle"
                 # Flush any creature spawn that was deferred while boss was active
                 if self.pending_spawn_type is not None:
@@ -1601,10 +1612,10 @@ class DuckHuntTkApp:
         self._draw_title_block("INSTRUCCIONES")
 
         lines = [
-            "1. En Clasico dispara con click izquierdo.",
+            "1. Dispara con click izquierdo.",
             "2. Cada objetivo tiene 3 disparos maximo.",
             "3. Si se acaban los disparos, termina la partida.",
-            "4. En Futurista apunta con la mano y cierra el puno para disparar.",
+            "4. Selecciona tu modo de juego favorito.",
         ]
         base_y = 236
         for index, line in enumerate(lines):
@@ -1791,7 +1802,8 @@ class DuckHuntTkApp:
             self.screen.blit(surf, (rx, ry))
 
         # Boss animation (drawn on top of scanline, below crosshair)
-        if self.boss_anim_state != "idle":
+        # post_delay = boss already hidden, just waiting; don't draw
+        if self.boss_anim_state not in ("idle", "post_delay"):
             self._draw_boss_animation()
 
         if self.active_game_mode_id == "futuristic":

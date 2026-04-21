@@ -63,6 +63,13 @@
     "game_mode": "futuristic"
   },
   {
+    "player_name": "si",
+    "score": 411,
+    "round": 5,
+    "map_index": 0,
+    "game_mode": "classic"
+  },
+  {
     "player_name": "m",
     "score": 313,
     "round": 7,
@@ -130,6 +137,13 @@
     "score": 123,
     "round": 4,
     "map_index": 1,
+    "game_mode": "futuristic"
+  },
+  {
+    "player_name": "si",
+    "score": 122,
+    "round": 4,
+    "map_index": 0,
     "game_mode": "futuristic"
   },
   {
