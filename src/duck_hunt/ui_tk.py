@@ -144,6 +144,7 @@ class DuckHuntTkApp:
         self.name_entry_illustration = self._load_name_entry_illustration()
         self.map_preview_cache = self._build_map_preview_cache()
         self.creature_frames = self._load_creature_frames()
+        self.boss_surfaces = self._load_boss_surfaces()
         self.target_surface = self._load_target_surface()
         self.scanline_overlay = self._build_scanline_overlay()
         self.audio_enabled = False
@@ -204,6 +205,26 @@ class DuckHuntTkApp:
         self.name_back_rect = pygame.Rect(0, 0, 0, 0)
         self.instructions_back_rect = pygame.Rect(0, 0, 0, 0)
         self.rankings_back_rect = pygame.Rect(0, 0, 0, 0)
+        self.rankings_tab_rects: list[pygame.Rect] = []
+        self.rankings_filter_mode: str | None = None  # None = all
+        self.game_over_play_rect = pygame.Rect(0, 0, 0, 0)
+        self.game_over_exit_rect = pygame.Rect(0, 0, 0, 0)
+        self.game_over_selected_index: int = 0  # 0=play again, 1=exit
+        self.hud_creature_kind: str = "duck"
+        self.is_fullscreen: bool = False
+        # Boss / assassin animation
+        self.boss_anim_state: str = "idle"  # idle | rising | holding | falling
+        self.boss_anim_timer: float = 0.0
+        self.boss_anim_y: float = 0.0
+        self.boss_anim_kind: str = "duck"
+        self.total_kills: int = 0
+        self.pending_spawn_type: str | None = None  # deferred while boss is active
+
+        # Extra (bonus) creatures for multi-creature rounds
+        self.extra_creatures: list[CreatureSprite] = []
+
+        # Score popups: list of {text, x, y, timer, max_timer}
+        self.score_popups: list[dict] = []
 
         self._video_player: object | None = None
         self._video_frame_surface: pygame.Surface | None = None
@@ -499,6 +520,15 @@ class DuckHuntTkApp:
             return []
         return [static_surface]
 
+    def _load_boss_surfaces(self) -> dict[str, pygame.Surface]:
+        """Load assassin/boss images for each creature type."""
+        result: dict[str, pygame.Surface] = {}
+        for kind, rel_path in self.config.creature_boss_images.items():
+            surface = self._load_surface(self.repo_root / rel_path)
+            if surface is not None:
+                result[kind] = surface
+        return result
+
     @staticmethod
     def _load_surface(path: Path) -> pygame.Surface | None:
         if not path.exists():
@@ -583,16 +613,20 @@ class DuckHuntTkApp:
                 elif self.state == "rankings":
                     self._on_rankings_click(event.pos)
                 elif self.state == "playing":
-                    allow_mouse_shot = (
-                        self.active_game_mode_id == "classic"
-                        or self.futuristic_test_mode
-                    )
+                    allow_mouse_shot = self.active_game_mode_id == "classic"
                     if allow_mouse_shot:
                         self._shoot_at(event.pos)
                 elif self.state == "game_over":
-                    self._go_to_menu()
+                    if self.game_over_play_rect.collidepoint(event.pos):
+                        self._play_again()
+                    elif self.game_over_exit_rect.collidepoint(event.pos):
+                        self._go_to_menu()
 
     def _on_keydown(self, event: pygame.event.Event) -> None:
+        if event.key == pygame.K_F11:
+            self._toggle_fullscreen()
+            return
+
         if self.state == "historia":
             if event.key == pygame.K_ESCAPE:
                 self._exit_historia()
@@ -620,8 +654,31 @@ class DuckHuntTkApp:
                 self._go_to_menu()
             return
 
-        if self.state in {"rankings", "game_over"}:
+        if self.state == "rankings":
             if event.key in {pygame.K_RETURN, pygame.K_ESCAPE}:
+                self._go_to_menu()
+            elif event.key in {pygame.K_LEFT}:
+                # Cycle tabs backwards: None → futuristic → classic → None
+                _tab_modes = [None, "classic", "futuristic"]
+                cur = _tab_modes.index(self.rankings_filter_mode)
+                self.rankings_filter_mode = _tab_modes[(cur - 1) % len(_tab_modes)]
+            elif event.key in {pygame.K_RIGHT, pygame.K_TAB}:
+                _tab_modes = [None, "classic", "futuristic"]
+                cur = _tab_modes.index(self.rankings_filter_mode)
+                self.rankings_filter_mode = _tab_modes[(cur + 1) % len(_tab_modes)]
+            return
+
+        if self.state == "game_over":
+            if event.key in {pygame.K_LEFT, pygame.K_UP}:
+                self.game_over_selected_index = 0
+            elif event.key in {pygame.K_RIGHT, pygame.K_DOWN}:
+                self.game_over_selected_index = 1
+            elif event.key == pygame.K_RETURN:
+                if self.game_over_selected_index == 0:
+                    self._play_again()
+                else:
+                    self._go_to_menu()
+            elif event.key == pygame.K_ESCAPE:
                 self._go_to_menu()
             return
 
@@ -724,7 +781,13 @@ class DuckHuntTkApp:
 
     def _on_rankings_click(self, mouse_pos: tuple[int, int]) -> None:
         if self.rankings_back_rect.collidepoint(mouse_pos):
-            self._go_to_menu()
+            self.state = "menu"
+            return
+        for idx, rect in enumerate(self.rankings_tab_rects):
+            if rect.collidepoint(mouse_pos):
+                # Tabs: 0=Todos, 1=Clásico, 2=Futurista
+                self.rankings_filter_mode = (None, "classic", "futuristic")[idx]
+                return
 
     def _on_map_selector_keydown(self, event: pygame.event.Event) -> None:
         del event
@@ -828,12 +891,15 @@ class DuckHuntTkApp:
             self.state = "name_entry"
             return
 
+        # Set game mode on session so it gets saved with the ranking
+        self.session.menu.current_game_mode = self.active_game_mode_id
+        self.total_kills = 0
+        self.boss_anim_state = "idle"
+        self.pending_spawn_type = None
+        self.extra_creatures = []
+        self.score_popups = []
+
         self.state = "playing"
-        self.current_creature = None
-        self.banner_text = ""
-        self.banner_timer = 0.0
-        self.hit_flash = 0.0
-        self.miss_flash = 0.0
         if self.active_game_mode_id == "futuristic":
             self.vision_cursor_pos = (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
             try:
@@ -841,13 +907,11 @@ class DuckHuntTkApp:
             except Exception:
                 started = False
             if not started:
-                self.last_message = (
-                    "No se pudo iniciar vision; juego en modo prueba normal"
-                )
-            elif self.futuristic_test_mode:
-                self.last_message = (
-                    "Modo Futurista Prueba: mouse activo + camara de depuracion"
-                )
+                # Auto-fallback: no camera detected, switch to classic
+                self.active_game_mode_id = "classic"
+                self.session.menu.current_game_mode = "classic"
+                self.last_message = "No se detecto camara; cambiado a Clasico"
+                self.vision_controller.stop()
             self.vision_status_message = self.vision_controller.status
         else:
             self.vision_controller.stop()
@@ -865,8 +929,12 @@ class DuckHuntTkApp:
 
             elif event_type == "creature_spawned":
                 creature_type = str(payload.get("creature_type", "duck"))
-                self._spawn_creature(creature_type)
-                if creature_type in {"duck", "seagull"}:
+                if self.boss_anim_state != "idle":
+                    # Boss is on screen — defer the spawn until it finishes
+                    self.pending_spawn_type = creature_type
+                else:
+                    self._spawn_creature_set(creature_type)
+                if creature_type in {"duck", "seagull", "zombie_duck"}:
                     self._play_sfx("duck_quack")
                 else:
                     if not self._play_sfx("duck_flap"):
@@ -883,6 +951,16 @@ class DuckHuntTkApp:
                     self._play_sfx("dog_score")
                     self.last_message = f"Hit! +{points}"
                     self.audio.play_sound("score", 0.8)
+                    # Score popup at creature position
+                    if self.current_creature is not None:
+                        cx = int(
+                            self.current_creature.x + self.current_creature.width / 2
+                        )
+                        cy = int(self.current_creature.y)
+                        self._add_score_popup(points, (cx, cy))
+                    self.total_kills += 1
+                    if self.total_kills % 3 == 0 and self.boss_anim_state == "idle":
+                        self._start_boss_animation(self.hud_creature_kind)
                 elif action == "miss":
                     self.miss_flash = 0.12
                     self.audio.play_sound("quack", 0.7)
@@ -901,10 +979,14 @@ class DuckHuntTkApp:
 
             elif event_type == "game_over":
                 self.state = "game_over"
+                self.game_over_selected_index = 0
                 self.current_creature = None
+                self.extra_creatures = []
+                self.score_popups = []
+                self.pending_spawn_type = None
                 self.banner_text = "GAME OVER"
                 self.banner_timer = 3.0
-                self.last_message = "Press ENTER to return to menu"
+                self.last_message = ""
                 self.vision_controller.stop()
                 pygame.mouse.set_visible(True)
 
@@ -914,15 +996,39 @@ class DuckHuntTkApp:
             spec = self.config.creature_types["duck"]
             creature_type = "duck"
 
-        move_right = bool(self.session.rng.randint(0, 1))
-        x = float(self.session.rng.randint(42, WINDOW_WIDTH - spec.width - 42))
-        y = float(WINDOW_HEIGHT + spec.height + self.session.rng.randint(20, 140))
-
+        # Pick spawn side: 50% bottom, 25% left, 25% right
+        spawn_side = self.session.rng.randint(0, 3)  # 0,1 = bottom; 2 = left; 3 = right
         speed_factor = max(0.75, float(self.session.game.duck_speed) / 4.0)
         base_speed = (115.0 + (spec.base_speed * 25.0)) * speed_factor
-        vx = base_speed if move_right else -base_speed
-        vy = -float(self.session.rng.randint(150, 255)) * speed_factor
         phase = self.session.rng.next_float() * math.tau
+
+        if spawn_side <= 1:  # bottom
+            move_right = bool(self.session.rng.randint(0, 1))
+            x = float(self.session.rng.randint(42, WINDOW_WIDTH - spec.width - 42))
+            y = float(WINDOW_HEIGHT + spec.height + self.session.rng.randint(20, 140))
+            vx = base_speed if move_right else -base_speed
+            vy = -float(self.session.rng.randint(150, 255)) * speed_factor
+            entering_from_bottom = True
+        elif spawn_side == 2:  # left
+            x = float(-spec.width - 20)
+            y = float(
+                self.session.rng.randint(
+                    TOP_MARGIN + 30, WINDOW_HEIGHT - BOTTOM_MARGIN - spec.height - 30
+                )
+            )
+            vx = base_speed
+            vy = float(self.session.rng.randint(-80, 80)) * speed_factor
+            entering_from_bottom = False
+        else:  # right
+            x = float(WINDOW_WIDTH + 20)
+            y = float(
+                self.session.rng.randint(
+                    TOP_MARGIN + 30, WINDOW_HEIGHT - BOTTOM_MARGIN - spec.height - 30
+                )
+            )
+            vx = -base_speed
+            vy = float(self.session.rng.randint(-80, 80)) * speed_factor
+            entering_from_bottom = False
 
         self.current_creature = CreatureSprite(
             kind=creature_type,
@@ -934,7 +1040,87 @@ class DuckHuntTkApp:
             vx=vx,
             vy=vy,
             phase=phase,
-            entering_from_bottom=True,
+            entering_from_bottom=entering_from_bottom,
+        )
+        self.hud_creature_kind = creature_type
+
+    def _spawn_creature_set(self, creature_type: str) -> None:
+        """Spawn main creature + extras based on current round."""
+        self.extra_creatures = []
+        self._spawn_creature(creature_type)
+        round_num = self.session.game.current_round
+        extra_count = 0
+        if round_num >= 10:
+            extra_count = 2
+        elif round_num >= 5:
+            extra_count = 1
+        for _ in range(extra_count):
+            self._spawn_extra_creature(creature_type)
+
+    def _spawn_extra_creature(self, creature_type: str) -> None:
+        """Spawn a bonus creature (not tracked by game_state) into extra_creatures."""
+        import random as _rnd
+
+        spec = self.config.creature_types.get(creature_type)
+        if spec is None:
+            spec = self.config.creature_types["duck"]
+            creature_type = "duck"
+        speed_factor = max(0.75, float(self.session.game.duck_speed) / 4.0)
+        base_speed = (115.0 + (spec.base_speed * 25.0)) * speed_factor
+        phase = _rnd.random() * math.tau
+        side = _rnd.randint(0, 3)
+        if side <= 1:  # bottom
+            move_right = bool(_rnd.randint(0, 1))
+            x = float(_rnd.randint(42, WINDOW_WIDTH - spec.width - 42))
+            y = float(WINDOW_HEIGHT + spec.height + _rnd.randint(20, 140))
+            vx = base_speed if move_right else -base_speed
+            vy = -float(_rnd.randint(150, 255)) * speed_factor
+            entering_from_bottom = True
+        elif side == 2:  # left
+            x = float(-spec.width - 20)
+            y = float(
+                _rnd.randint(
+                    TOP_MARGIN + 30, WINDOW_HEIGHT - BOTTOM_MARGIN - spec.height - 30
+                )
+            )
+            vx = base_speed
+            vy = float(_rnd.randint(-80, 80)) * speed_factor
+            entering_from_bottom = False
+        else:  # right
+            x = float(WINDOW_WIDTH + 20)
+            y = float(
+                _rnd.randint(
+                    TOP_MARGIN + 30, WINDOW_HEIGHT - BOTTOM_MARGIN - spec.height - 30
+                )
+            )
+            vx = -base_speed
+            vy = float(_rnd.randint(-80, 80)) * speed_factor
+            entering_from_bottom = False
+        self.extra_creatures.append(
+            CreatureSprite(
+                kind=creature_type,
+                movement_type=spec.movement_type,
+                width=spec.width,
+                height=spec.height,
+                x=x,
+                y=y,
+                vx=vx,
+                vy=vy,
+                phase=phase,
+                entering_from_bottom=entering_from_bottom,
+            )
+        )
+
+    def _add_score_popup(self, points: int, pos: tuple[int, int]) -> None:
+        """Queue a score popup that floats upward and fades."""
+        self.score_popups.append(
+            {
+                "text": f"+{points}",
+                "x": float(pos[0]),
+                "y": float(pos[1]),
+                "timer": 1.4,
+                "max_timer": 1.4,
+            }
         )
 
     def _spawn_blood_effect(self, x: float, y: float) -> None:
@@ -945,15 +1131,28 @@ class DuckHuntTkApp:
         self.blood_effects.append(effect)
 
     def _shoot_at(self, mouse_pos: tuple[int, int]) -> None:
+        self._play_sfx("duck_shot")
+        self.audio.play_sound("shoot", 0.85)
+
+        # Check bonus (extra) creatures first — they award points without game_state shots
+        for extra in list(self.extra_creatures):
+            if extra.rect().collidepoint(mouse_pos):
+                self.extra_creatures.remove(extra)
+                self._spawn_blood_effect(float(mouse_pos[0]), float(mouse_pos[1]))
+                bonus_pts = 75
+                self.session.game.total_score += bonus_pts
+                self._add_score_popup(bonus_pts, mouse_pos)
+                self.hit_flash = 0.10
+                self.total_kills += 1
+                if self.total_kills % 3 == 0 and self.boss_anim_state == "idle":
+                    self._start_boss_animation(self.hud_creature_kind)
+                return
+
         if self.current_creature is None:
             return
 
-        self._play_sfx("duck_shot")
-
         hit = self.current_creature.rect().collidepoint(mouse_pos)
         action = "hit" if hit else "miss"
-
-        self.audio.play_sound("shoot", 0.85)
 
         try:
             events = self.runtime.perform_action(action)
@@ -971,6 +1170,57 @@ class DuckHuntTkApp:
                 self.current_creature.vy *= 1.08
 
         self._process_runtime_events(events)
+
+    def _play_again(self) -> None:
+        """Restart from map selector keeping name and seeds."""
+        self.state = "menu"  # brief reset to allow _enter_map_selector
+        self.current_creature = None
+        self.banner_text = ""
+        self.blood_effects = []
+        self.total_kills = 0
+        self.boss_anim_state = "idle"
+        self.pending_spawn_type = None
+        self.extra_creatures = []
+        self.score_popups = []
+        self._enter_map_selector()
+
+    def _start_boss_animation(self, creature_kind: str) -> None:
+        """Trigger the boss/assassin pop-up animation from the bottom of the screen."""
+        self.boss_anim_kind = creature_kind
+        self.boss_anim_state = "rising"
+        self.boss_anim_timer = 0.0
+        self.boss_anim_y = float(WINDOW_HEIGHT + 20)
+
+    _BOSS_RISE_TARGET = WINDOW_HEIGHT - 390  # visible peek-y position (above HUD)
+    _BOSS_RISE_SPEED = 480.0  # px/s going up
+    _BOSS_HOLD_TIME = 1.3  # seconds on screen
+    _BOSS_FALL_SPEED = 520.0  # px/s going down
+
+    def _update_boss_animation(self, dt: float) -> None:
+        if self.boss_anim_state == "rising":
+            self.boss_anim_y -= self._BOSS_RISE_SPEED * dt
+            if self.boss_anim_y <= self._BOSS_RISE_TARGET:
+                self.boss_anim_y = float(self._BOSS_RISE_TARGET)
+                self.boss_anim_state = "holding"
+                self.boss_anim_timer = 0.0
+        elif self.boss_anim_state == "holding":
+            self.boss_anim_timer += dt
+            if self.boss_anim_timer >= self._BOSS_HOLD_TIME:
+                self.boss_anim_state = "falling"
+        elif self.boss_anim_state == "falling":
+            self.boss_anim_y += self._BOSS_FALL_SPEED * dt
+            if self.boss_anim_y >= WINDOW_HEIGHT + 20:
+                self.boss_anim_state = "idle"
+                # Flush any creature spawn that was deferred while boss was active
+                if self.pending_spawn_type is not None:
+                    pending = self.pending_spawn_type
+                    self.pending_spawn_type = None
+                    self._spawn_creature_set(pending)
+
+    def _toggle_fullscreen(self) -> None:
+        self.is_fullscreen = not self.is_fullscreen
+        flags = pygame.FULLSCREEN if self.is_fullscreen else 0
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), flags)
 
     def _go_to_menu(self, message: str | None = None) -> None:
         self.state = "menu"
@@ -1055,6 +1305,10 @@ class DuckHuntTkApp:
             if sample.shoot:
                 self._shoot_at(self.vision_cursor_pos)
 
+        # Boss animation update (runs in playing state)
+        if self.state == "playing" and self.boss_anim_state != "idle":
+            self._update_boss_animation(dt)
+
         if self.state != "playing":
             return
 
@@ -1062,6 +1316,24 @@ class DuckHuntTkApp:
 
         if self.current_creature is not None and self.session.game.creature_active:
             self.current_creature.update(dt, WINDOW_WIDTH, WINDOW_HEIGHT)
+
+        # Update extra (bonus) creatures and prune off-screen ones
+        alive_extras = []
+        for extra in self.extra_creatures:
+            extra.update(dt, WINDOW_WIDTH, WINDOW_HEIGHT)
+            cx, cy = extra.x, extra.y
+            if (-300 < cx < WINDOW_WIDTH + 300) and (-300 < cy < WINDOW_HEIGHT + 300):
+                alive_extras.append(extra)
+        self.extra_creatures = alive_extras
+
+        # Decay score popups
+        updated_popups = []
+        for popup in self.score_popups:
+            popup["timer"] -= dt
+            popup["y"] -= 38.0 * dt  # float upward
+            if popup["timer"] > 0.0:
+                updated_popups.append(popup)
+        self.score_popups = updated_popups
 
     def _render(self) -> None:
         if self.state == "intro":
@@ -1386,17 +1658,46 @@ class DuckHuntTkApp:
 
         self._draw_title_block("RANKINGS")
 
-        rows = self.session.menu.get_rankings_view(limit=10)
+        # Mode filter tabs
+        tab_labels = [
+            ("Todos", None),
+            ("Clasico", "classic"),
+            ("Futurista", "futuristic"),
+        ]
+        self.rankings_tab_rects = []
+        tab_w, tab_h = 160, 32
+        tab_y = 130
+        tab_start_x = (
+            WINDOW_WIDTH // 2
+            - (len(tab_labels) * tab_w + (len(tab_labels) - 1) * 8) // 2
+        )
+        for t_idx, (label, mode) in enumerate(tab_labels):
+            rect = pygame.Rect(tab_start_x + t_idx * (tab_w + 8), tab_y, tab_w, tab_h)
+            self.rankings_tab_rects.append(rect)
+            is_active = self.rankings_filter_mode == mode
+            bg_col = (178, 70, 60) if is_active else (40, 20, 20)
+            pygame.draw.rect(self.screen, bg_col, rect, border_radius=6)
+            pygame.draw.rect(self.screen, (200, 120, 110), rect, 1, border_radius=6)
+            lbl_surf = self.small_font.render(
+                label, True, (255, 240, 220) if is_active else (180, 160, 155)
+            )
+            self.screen.blit(lbl_surf, lbl_surf.get_rect(center=rect.center))
+
+        rows = self.session.menu.get_rankings_view(
+            limit=10, game_mode=self.rankings_filter_mode
+        )
         panel = pygame.Rect(130, 176, 1020, 470)
         pygame.draw.rect(self.screen, (20, 10, 12), panel, border_radius=12)
         pygame.draw.rect(self.screen, (178, 70, 60), panel, 3, border_radius=12)
 
+        show_mode_col = self.rankings_filter_mode is None
         col_x = {
             "pos": 182,
-            "name": 260,
-            "pts": 520,
-            "round": 630,
-            "map": 742,
+            "name": 256,
+            "pts": 490,
+            "round": 598,
+            "map": 706 if show_mode_col else 742,
+            "modo": 904,
         }
 
         header_style = (255, 226, 176)
@@ -1415,6 +1716,10 @@ class DuckHuntTkApp:
         self.screen.blit(
             self.small_font.render("MAPA", True, header_style), (col_x["map"], 206)
         )
+        if show_mode_col:
+            self.screen.blit(
+                self.small_font.render("MODO", True, header_style), (col_x["modo"], 206)
+            )
 
         if not rows:
             empty = self.body_font.render("Aun no hay puntajes", True, (239, 224, 209))
@@ -1443,9 +1748,17 @@ class DuckHuntTkApp:
                     self.body_font.render(row.map_name, True, row_style),
                     (col_x["map"], y),
                 )
+                if show_mode_col:
+                    mode_label = {"classic": "CL", "futuristic": "FUT"}.get(
+                        getattr(row, "game_mode", "classic"), "---"
+                    )
+                    self.screen.blit(
+                        self.body_font.render(mode_label, True, row_style),
+                        (col_x["modo"], y),
+                    )
 
         hint = self.small_font.render("Regresar", True, (255, 207, 182))
-        self.rankings_back_rect = hint.get_rect(center=(WINDOW_WIDTH // 2, 612))
+        self.rankings_back_rect = hint.get_rect(center=(WINDOW_WIDTH // 2, 656))
         self.screen.blit(hint, self.rankings_back_rect)
         self.screen.blit(self.scanline_overlay, (0, 0))
 
@@ -1455,6 +1768,10 @@ class DuckHuntTkApp:
 
         if self.current_creature is not None:
             self._draw_creature(self.current_creature)
+
+        # Draw extra (bonus) creatures
+        for extra in self.extra_creatures:
+            self._draw_creature(extra)
 
         # Draw blood effects
         self._draw_blood_effects()
@@ -1481,36 +1798,43 @@ class DuckHuntTkApp:
 
         self.screen.blit(self.scanline_overlay, (0, 0))
 
-        if self.active_game_mode_id == "futuristic":
-            if self.futuristic_test_mode:
-                crosshair_pos = pygame.mouse.get_pos()
-                pygame.draw.circle(
-                    self.screen, (78, 237, 255), self.vision_cursor_pos, 18, 2
-                )
-                pygame.draw.circle(
-                    self.screen, (78, 237, 255), self.vision_cursor_pos, 3
-                )
-            else:
-                crosshair_pos = self.vision_cursor_pos
+        # Score popups: float upward, white, fade out
+        for popup in self.score_popups:
+            ratio = popup["timer"] / popup["max_timer"]
+            alpha = int(255 * min(1.0, ratio * 2))
+            surf = self.hud_font.render(popup["text"], True, (255, 255, 255))
+            surf.set_alpha(alpha)
+            rx = int(popup["x"]) - surf.get_width() // 2
+            ry = int(popup["y"]) - surf.get_height() // 2
+            # Subtle shadow for readability
+            shadow = self.hud_font.render(popup["text"], True, (30, 30, 30))
+            shadow.set_alpha(alpha)
+            self.screen.blit(shadow, (rx + 2, ry + 2))
+            self.screen.blit(surf, (rx, ry))
 
+        # Boss animation (drawn on top of scanline, below crosshair)
+        if self.boss_anim_state != "idle":
+            self._draw_boss_animation()
+
+        if self.active_game_mode_id == "futuristic":
+            crosshair_pos = self.vision_cursor_pos
         else:
             crosshair_pos = pygame.mouse.get_pos()
 
         self._draw_crosshair(crosshair_pos)
 
     def _is_high_score(self) -> bool:
-        """Check if current game score is a high score (top 5)."""
+        """Check if current game score is a high score (top 5) for the active mode."""
         status = self.runtime.status()
         current_score = int(status.get("score", 0))
 
-        # Get top 5 rankings
-        rows = self.session.menu.get_rankings_view(limit=5)
+        rows = self.session.menu.get_rankings_view(
+            limit=5, game_mode=self.active_game_mode_id
+        )
 
-        # If no rankings yet, it's a high score
         if not rows:
             return True
 
-        # Check if current score is better than the lowest top 5 score
         lowest_top_score = rows[-1].score if rows else 0
         return current_score >= lowest_top_score
 
@@ -1528,10 +1852,10 @@ class DuckHuntTkApp:
 
         # Draw the hunting dog (happy if high score, sad if not)
         if dog_surface is not None:
-            dog_scale = (550, 420)
+            dog_scale = (460, 350)
             dog = pygame.transform.smoothscale(dog_surface, dog_scale)
             dog = pygame.transform.flip(dog, True, False)
-            dog_pos = (680, 240)
+            dog_pos = (WINDOW_WIDTH - 490, 260)
             dog_shadow = dog.copy()
             dog_shadow.fill((0, 0, 0, 180), special_flags=pygame.BLEND_RGBA_MULT)
             self.screen.blit(dog_shadow, (dog_pos[0] + 14, dog_pos[1] + 14))
@@ -1552,15 +1876,15 @@ class DuckHuntTkApp:
 
         # Show special message if high score
         if is_high_score:
-            high_score_msg = self.body_font.render(
-                "🏆 HIGH SCORE! 🏆", True, (255, 215, 0)
-            )
+            high_score_msg = self.body_font.render("HIGH SCORE!", True, (255, 215, 0))
             self.screen.blit(
                 high_score_msg,
                 (WINDOW_WIDTH // 2 - high_score_msg.get_width() // 2, 270),
             )
 
-        rows = self.session.menu.get_rankings_view(limit=5)
+        rows = self.session.menu.get_rankings_view(
+            limit=5, game_mode=self.active_game_mode_id
+        )
         top_label = self.body_font.render("Top Rankings", True, (255, 223, 144))
         self.screen.blit(top_label, (60, 286))
 
@@ -1569,10 +1893,34 @@ class DuckHuntTkApp:
             surf = self.small_font.render(line, True, (223, 237, 255))
             self.screen.blit(surf, (60, 328 + (idx * 28)))
 
-        hint = self.small_font.render(
-            "ENTER or ESC to return to menu", True, (224, 224, 224)
-        )
-        self.screen.blit(hint, (WINDOW_WIDTH // 2 - hint.get_width() // 2, 620))
+        # Buttons: Jugar otra vez / Salir — white style, keyboard selectable
+        btn_y = 600
+        btn_w, btn_h = 230, 46
+        play_rect = pygame.Rect(WINDOW_WIDTH // 2 - btn_w - 16, btn_y, btn_w, btn_h)
+        exit_rect = pygame.Rect(WINDOW_WIDTH // 2 + 16, btn_y, btn_w, btn_h)
+        self.game_over_play_rect = play_rect
+        self.game_over_exit_rect = exit_rect
+
+        for i, (rect, label) in enumerate(
+            [(play_rect, "Jugar otra vez"), (exit_rect, "Salir al menu")]
+        ):
+            selected = self.game_over_selected_index == i
+            pulse = abs(math.sin(self.menu_pulse * 3.0))
+            bg_alpha = int(80 + pulse * 50) if selected else 50
+            bg_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+            bg_surf.fill((255, 255, 255, bg_alpha))
+            self.screen.blit(bg_surf, rect.topleft)
+            border_w = 3 if selected else 1
+            border_col = (255, 255, 255) if selected else (160, 160, 160)
+            pygame.draw.rect(self.screen, border_col, rect, border_w, border_radius=8)
+            text_col = (255, 255, 255) if selected else (190, 190, 190)
+            lbl = self.body_font.render(label, True, text_col)
+            if selected:
+                shadow = self.body_font.render(label, True, (0, 0, 0))
+                self.screen.blit(
+                    shadow, shadow.get_rect(center=(rect.centerx + 1, rect.centery + 1))
+                )
+            self.screen.blit(lbl, lbl.get_rect(center=rect.center))
         self.screen.blit(self.scanline_overlay, (0, 0))
 
     def _draw_map_background(self) -> None:
@@ -1617,6 +1965,35 @@ class DuckHuntTkApp:
         for x, y in rivets:
             pygame.draw.circle(self.screen, (156, 162, 172), (x, y), 5)
             pygame.draw.circle(self.screen, (65, 69, 77), (x, y), 2)
+
+    def _draw_hud_creature_icon(
+        self, x: int, y: int, w: int, h: int, *, killed: bool
+    ) -> None:
+        """Draw a small creature silhouette for the HUD objectives panel."""
+        kind = self.hud_creature_kind
+        sprite_set = self.creature_frames.get(kind)
+        if sprite_set:
+            frames = sprite_set.get("right") or sprite_set.get("left") or []
+            if frames:
+                scaled = pygame.transform.smoothscale(frames[0], (w, h))
+                if killed:
+                    # Killed → black silhouette
+                    silhouette = scaled.copy()
+                    silhouette.fill(
+                        (0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MULT
+                    )
+                    self.screen.blit(silhouette, (x, y))
+                else:
+                    # Alive → full color
+                    self.screen.blit(scaled, (x, y))
+                return
+        # Fallback simple bird polygon
+        color = (96, 188, 86) if not killed else (20, 20, 20)
+        cx, cy = x + w // 2, y + h // 2
+        body = pygame.Rect(x + 4, y + 4, w - 8, h - 8)
+        pygame.draw.ellipse(self.screen, color, body)
+        wing = [(x, cy), (cx, y), (cx, cy + 4)]
+        pygame.draw.polygon(self.screen, color, wing)
 
     def _draw_shell_icon(self, x: int, y: int, active: bool) -> None:
         body_color = (208, 67, 57) if active else (84, 53, 52)
@@ -1681,17 +2058,19 @@ class DuckHuntTkApp:
             0, min(int(self.config.ducks_per_round), int(status["ducks_caught"]))
         )
         objectives_total = int(self.config.ducks_per_round)
-        objectives_text = f"{objectives_done:02d}/{objectives_total:02d}"
-        objectives_shadow = self.hud_font.render(objectives_text, True, digit_shadow)
-        objectives_surface = self.hud_font.render(objectives_text, True, digit_color)
-        self.screen.blit(
-            objectives_shadow,
-            (center_panel.x + 18, center_panel.y + 44),
-        )
-        self.screen.blit(
-            objectives_surface,
-            (center_panel.x + 16, center_panel.y + 42),
-        )
+        icon_w, icon_h = 28, 22
+        icon_spacing = icon_w + 5
+        total_icons_w = objectives_total * icon_spacing - 5
+        icon_start_x = center_panel.x + (center_panel.width - total_icons_w) // 2
+        icon_y = center_panel.y + 44
+        for i in range(objectives_total):
+            self._draw_hud_creature_icon(
+                icon_start_x + i * icon_spacing,
+                icon_y,
+                icon_w,
+                icon_h,
+                killed=(i < objectives_done),
+            )
 
         score_label = self.small_font.render("SCORE", True, label_color)
         self.screen.blit(score_label, (right_panel.x + 16, right_panel.y + 12))
@@ -1788,6 +2167,21 @@ class DuckHuntTkApp:
             # Draw centered on effect position
             rect = scaled_surface.get_rect(center=(int(effect.x), int(effect.y)))
             self.screen.blit(scaled_surface, rect)
+
+    def _draw_boss_animation(self) -> None:
+        """Draw the assassin/boss popping up from the bottom of the screen."""
+        surface = self.boss_surfaces.get(self.boss_anim_kind)
+        if surface is None:
+            return
+        boss_w, boss_h = 280, 240
+        scaled = pygame.transform.smoothscale(surface, (boss_w, boss_h))
+        x = WINDOW_WIDTH // 2 - boss_w // 2
+        y = int(self.boss_anim_y)
+        # Shadow
+        shadow = scaled.copy()
+        shadow.fill((0, 0, 0, 120), special_flags=pygame.BLEND_RGBA_MULT)
+        self.screen.blit(shadow, (x + 10, y + 10))
+        self.screen.blit(scaled, (x, y))
 
     def _draw_crosshair(self, mouse_pos: tuple[int, int]) -> None:
         x, y = mouse_pos
