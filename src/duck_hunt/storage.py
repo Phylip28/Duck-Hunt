@@ -13,6 +13,7 @@ class RankingEntry:
     score: int
     round: int
     map_index: int
+    game_mode: str = "classic"
 
 
 class Storage:
@@ -31,6 +32,7 @@ class Storage:
         round_number: int,
         player_name: str = "Player",
         map_index: int = 0,
+        game_mode: str = "classic",
     ) -> None:
         rankings = self.get_rankings()
         rankings.append(
@@ -39,6 +41,7 @@ class Storage:
                 score=int(score),
                 round=int(round_number),
                 map_index=int(map_index),
+                game_mode=str(game_mode),
             )
         )
         rankings.sort(key=lambda rank: rank.score, reverse=True)
@@ -71,6 +74,7 @@ class Storage:
                         score=int(item.get("score", 0)),
                         round=int(item.get("round", 0)),
                         map_index=int(item.get("map_index", 0)),
+                        game_mode=str(item.get("game_mode", "classic")),
                     )
                 )
             except (TypeError, ValueError):
@@ -85,6 +89,12 @@ class Storage:
         if limit < 0:
             raise ValueError("limit must be >= 0")
         return self.get_rankings()[:limit]
+
+    def get_top_rankings_by_mode(
+        self, game_mode: str, limit: int = 10
+    ) -> list[RankingEntry]:
+        filtered = [r for r in self.get_rankings() if r.game_mode == game_mode]
+        return filtered[:limit]
 
     def clear_rankings(self) -> None:
         if self.storage_file.exists():

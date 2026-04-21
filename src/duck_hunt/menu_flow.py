@@ -15,6 +15,7 @@ class RankingRow:
     score: int
     map_name: str
     round: int
+    game_mode: str = "classic"
 
 
 class MenuFlow:
@@ -36,6 +37,7 @@ class MenuFlow:
 
         self.final_score = 0
         self.final_round = 1
+        self.current_game_mode: str = "classic"
 
     def show_main_menu(self) -> None:
         self.current_screen = self.MAIN_MENU
@@ -59,8 +61,13 @@ class MenuFlow:
     def show_rankings(self) -> None:
         self.current_screen = self.RANKINGS_MENU
 
-    def get_rankings_view(self, limit: int = 10) -> list[RankingRow]:
-        rankings = self.storage.get_top_rankings(limit)
+    def get_rankings_view(
+        self, limit: int = 10, game_mode: str | None = None
+    ) -> list[RankingRow]:
+        if game_mode is not None:
+            rankings = self.storage.get_top_rankings_by_mode(game_mode, limit)
+        else:
+            rankings = self.storage.get_top_rankings(limit)
         rows: list[RankingRow] = []
 
         for index, rank in enumerate(rankings, start=1):
@@ -76,6 +83,7 @@ class MenuFlow:
                     score=rank.score,
                     map_name=map_name,
                     round=rank.round,
+                    game_mode=rank.game_mode,
                 )
             )
 
@@ -93,6 +101,7 @@ class MenuFlow:
             self.final_round,
             self.player_name or "Player",
             int(map_index),
+            game_mode=self.current_game_mode,
         )
 
     def back_to_menu_from_game_over(self) -> None:

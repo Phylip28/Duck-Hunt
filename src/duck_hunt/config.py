@@ -35,6 +35,10 @@ class Config:
         self.seagull_image_names = ["seagull-left.gif", "seagull-right.gif"]
         self.ghost_image_names = ["ghost-left.gif", "ghost-right.gif"]
         self.bat_image_names = ["bat-left.gif", "bat-right.gif"]
+        self.zombie_duck_image_names = [
+            "radioactive-duck-left.png",
+            "radioactive-duck-right.png",
+        ]
 
         self.duck_width = 120
         self.duck_height = 115
@@ -47,11 +51,23 @@ class Config:
 
         self.creature_types = {
             "duck": CreatureType("duck", "duck_image_names", 120, 115, 4, "linear"),
+            "zombie_duck": CreatureType(
+                "zombie_duck", "zombie_duck_image_names", 120, 115, 4, "linear"
+            ),
             "seagull": CreatureType(
                 "seagull", "seagull_image_names", 160, 135, 5, "linear"
             ),
             "ghost": CreatureType("ghost", "ghost_image_names", 130, 150, 3, "wave"),
             "bat": CreatureType("bat", "bat_image_names", 160, 160, 6, "zigzag"),
+        }
+
+        # Boss/assassin image per creature type
+        self.creature_boss_images: dict[str, str] = {
+            "duck": "assets/images/creatures/dog-duck1.png",
+            "zombie_duck": "assets/images/creatures/radioducks-assasin.png",
+            "seagull": "assets/images/creatures/seagulls-assasin.png",
+            "ghost": "assets/images/creatures/ghost-assasin.png",
+            "bat": "assets/images/creatures/bats-assasin.png",
         }
 
         self.available_creature_types = ["duck", "seagull", "bat"]
@@ -77,6 +93,7 @@ class Config:
         ]
 
         self.creature_rules_by_background = {
+            "bg-plague.jpg": ["zombie_duck"],
             "bg-moon.jpg": ["bat"],
             "bg-castle.jpg": ["ghost"],
             "bg-hell.jpg": ["duck"],
