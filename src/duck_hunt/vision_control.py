@@ -59,8 +59,17 @@ class HandVisionController:
         self._cursor_x = float(screen_width // 2)
         self._cursor_y = float(screen_height // 2)
         self._fist_was_closed = False
+        self._fist_frames = 0
         self._last_shot_time = 0.0
         self._status = "Vision desactivada"
+
+        # Relative (mouse-like) tracking state
+        self._prev_lm_x: float | None = None
+        self._prev_lm_y: float | None = None
+        self._prev_wrist_x: float | None = None
+        self._prev_wrist_y: float | None = None
+        self._hand_speed: float = 0.0
+        self.sensitivity: float = 2.0
 
         # Debug window
         self.show_debug_window = True
@@ -102,6 +111,12 @@ class HandVisionController:
         self._frame_ts_ms = 0
         self._prev_gray = None
         self._fist_was_closed = False
+        self._fist_frames = 0
+        self._prev_lm_x = None
+        self._prev_lm_y = None
+        self._prev_wrist_x = None
+        self._prev_wrist_y = None
+        self._hand_speed = 0.0
 
         self._landmarker = self._build_landmarker()
         self._started = True
@@ -145,12 +160,12 @@ class HandVisionController:
 
         try:
             from mediapipe.tasks.python import vision  # type: ignore
-            from mediapipe.tasks.python.core import base_options as base_opts  # type: ignore
+            from mediapipe.tasks.python.core import (
+                base_options as base_opts,  # type: ignore
+            )
 
             options = vision.HandLandmarkerOptions(
-                base_options=base_opts.BaseOptions(
-                    model_asset_path=str(model_path)
-                ),
+                base_options=base_opts.BaseOptions(model_asset_path=str(model_path)),
                 num_hands=1,
                 running_mode=vision.RunningMode.VIDEO,
                 min_hand_detection_confidence=0.5,
@@ -234,30 +249,66 @@ class HandVisionController:
 
         if not result.hand_landmarks:
             self._fist_was_closed = False
+            self._fist_frames = 0
+            self._prev_lm_x = None
+            self._prev_lm_y = None
+            self._prev_wrist_x = None
+            self._prev_wrist_y = None
+            self._hand_speed = 0.0
             self._status = "Buscando mano..."
             return False, False
 
         landmarks = result.hand_landmarks[0]
-        index_tip = landmarks[8]
+        wrist = landmarks[0]
 
-        target_x = max(0, min(self.screen_width - 1, int(index_tip.x * self.screen_width)))
-        target_y = max(0, min(self.screen_height - 1, int(index_tip.y * self.screen_height)))
+        # Cursor: relative movement from wrist — stable point unaffected by finger gestures
+        if self._prev_wrist_x is not None:
+            dw_x = wrist.x - self._prev_wrist_x
+            dw_y = wrist.y - self._prev_wrist_y
+            self._hand_speed = (dw_x * dw_x + dw_y * dw_y) ** 0.5
+            dx = dw_x * self.screen_width * self.sensitivity
+            dy = dw_y * self.screen_height * self.sensitivity
+            self._cursor_x = max(
+                0.0, min(float(self.screen_width - 1), self._cursor_x + dx)
+            )
+            self._cursor_y = max(
+                0.0, min(float(self.screen_height - 1), self._cursor_y + dy)
+            )
+        else:
+            self._hand_speed = 0.0
 
-        blend = self.smoothing
-        self._cursor_x = ((1.0 - blend) * self._cursor_x) + (blend * target_x)
-        self._cursor_y = ((1.0 - blend) * self._cursor_y) + (blend * target_y)
+        self._prev_lm_x = wrist.x
+        self._prev_lm_y = wrist.y
+        self._prev_wrist_x = wrist.x
+        self._prev_wrist_y = wrist.y
 
-        # Draw index tip on debug frame
+        # Draw bounding ellipse around all hand landmarks
         frame_h, frame_w = frame.shape[:2]
-        tip_px = (int(index_tip.x * frame_w), int(index_tip.y * frame_h))
-        self._cv2.circle(frame, tip_px, 12, (0, 255, 120), 3)
+        all_xs = [int(lm.x * frame_w) for lm in landmarks]
+        all_ys = [int(lm.y * frame_h) for lm in landmarks]
+        cx = (min(all_xs) + max(all_xs)) // 2
+        cy = (min(all_ys) + max(all_ys)) // 2
+        rx = max(10, (max(all_xs) - min(all_xs)) // 2 + 14)
+        ry = max(10, (max(all_ys) - min(all_ys)) // 2 + 14)
 
         fist_closed = self._is_fist_closed(landmarks)
+        ellipse_color = (60, 50, 255) if fist_closed else (0, 230, 110)
+        self._cv2.ellipse(frame, (cx, cy), (rx, ry), 0, 0, 360, ellipse_color, 2)
+
+        # Debounce: require 2 consecutive fist frames before firing
+        if fist_closed:
+            self._fist_frames += 1
+        else:
+            self._fist_frames = 0
+
         shoot = False
         now = time.monotonic()
+        # Velocity gate: wrist speed in normalized units (0.0–1.0 per frame)
+        # 0.025 ≈ 2.5% of frame width per frame — blocks fast repositioning, not fist closure
+        hand_is_still = self._hand_speed < 0.025
         if (
-            fist_closed
-            and not self._fist_was_closed
+            self._fist_frames == 2
+            and hand_is_still
             and (now - self._last_shot_time) >= self.shot_cooldown_seconds
         ):
             shoot = True
@@ -268,19 +319,22 @@ class HandVisionController:
         return True, shoot
 
     def _is_fist_closed(self, landmarks: Any) -> bool:
-        """Return True when enough fingers are folded (fist gesture)."""
+        """Return True when all 4 fingers are folded past their MCP knuckle."""
+        # Compare fingertip to MCP (knuckle base) — stricter than PIP comparison
+        # (tip_id, mcp_id) for index, middle, ring, pinky
         folded = 0
-        for tip_id, pip_id in ((8, 6), (12, 10), (16, 14), (20, 18)):
-            if landmarks[tip_id].y > landmarks[pip_id].y:
+        for tip_id, mcp_id in ((8, 5), (12, 9), (16, 13), (20, 17)):
+            if landmarks[tip_id].y > landmarks[mcp_id].y:
                 folded += 1
 
+        # Thumb: tip must be close to index MCP (knuckle) when tucked
         thumb_tip = landmarks[4]
-        palm_center = landmarks[9]
+        index_mcp = landmarks[5]
         thumb_tucked = (
-            abs(thumb_tip.x - palm_center.x) < 0.14
-            and abs(thumb_tip.y - palm_center.y) < 0.14
+            abs(thumb_tip.x - index_mcp.x) < 0.10
+            and abs(thumb_tip.y - index_mcp.y) < 0.10
         )
-        return folded >= 3 and thumb_tucked
+        return folded == 4 and thumb_tucked
 
     # ------------------------------------------------------------------
     # Optical-flow motion fallback
@@ -305,7 +359,9 @@ class HandVisionController:
         contours_result = self._cv2.findContours(
             thresh, self._cv2.RETR_EXTERNAL, self._cv2.CHAIN_APPROX_SIMPLE
         )
-        contours = contours_result[0] if len(contours_result) == 2 else contours_result[1]
+        contours = (
+            contours_result[0] if len(contours_result) == 2 else contours_result[1]
+        )
 
         tracked = False
         if contours:
@@ -316,16 +372,37 @@ class HandVisionController:
                     cx = int(moments["m10"] / moments["m00"])
                     cy = int(moments["m01"] / moments["m00"])
                     frame_h, frame_w = frame.shape[:2]
-                    target_x = max(0, min(self.screen_width - 1, int((cx / max(1, frame_w)) * self.screen_width)))
-                    target_y = max(0, min(self.screen_height - 1, int((cy / max(1, frame_h)) * self.screen_height)))
+                    target_x = max(
+                        0,
+                        min(
+                            self.screen_width - 1,
+                            int((cx / max(1, frame_w)) * self.screen_width),
+                        ),
+                    )
+                    target_y = max(
+                        0,
+                        min(
+                            self.screen_height - 1,
+                            int((cy / max(1, frame_h)) * self.screen_height),
+                        ),
+                    )
                     blend = self.smoothing
-                    self._cursor_x = ((1.0 - blend) * self._cursor_x) + (blend * target_x)
-                    self._cursor_y = ((1.0 - blend) * self._cursor_y) + (blend * target_y)
+                    self._cursor_x = ((1.0 - blend) * self._cursor_x) + (
+                        blend * target_x
+                    )
+                    self._cursor_y = ((1.0 - blend) * self._cursor_y) + (
+                        blend * target_y
+                    )
                     tracked = True
                     self._cv2.circle(frame, (cx, cy), 14, (0, 255, 255), 2)
-                    self._cv2.drawMarker(frame, (cx, cy), (0, 255, 255),
-                                        markerType=self._cv2.MARKER_CROSS,
-                                        markerSize=20, thickness=2)
+                    self._cv2.drawMarker(
+                        frame,
+                        (cx, cy),
+                        (0, 255, 255),
+                        markerType=self._cv2.MARKER_CROSS,
+                        markerSize=20,
+                        thickness=2,
+                    )
 
         shoot = False
         now = time.monotonic()
@@ -358,15 +435,46 @@ class HandVisionController:
             return
 
         color = (40, 220, 80) if tracked else (40, 120, 220)
-        self._cv2.putText(frame, f"Mode: {mode_label}", (12, 28),
-                          self._cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2, self._cv2.LINE_AA)
-        self._cv2.putText(frame, f"Cursor: {int(self._cursor_x)}, {int(self._cursor_y)}", (12, 56),
-                          self._cv2.FONT_HERSHEY_SIMPLEX, 0.6, (225, 225, 225), 2, self._cv2.LINE_AA)
-        self._cv2.putText(frame, f"Shoot: {'YES !!!' if shoot else 'NO'}", (12, 84),
-                          self._cv2.FONT_HERSHEY_SIMPLEX, 0.65,
-                          (60, 50, 255) if shoot else (200, 200, 200), 2, self._cv2.LINE_AA)
-        self._cv2.putText(frame, self._status, (12, frame.shape[0] - 14),
-                          self._cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 80), 1, self._cv2.LINE_AA)
+        self._cv2.putText(
+            frame,
+            f"Mode: {mode_label}",
+            (12, 28),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            color,
+            2,
+            self._cv2.LINE_AA,
+        )
+        self._cv2.putText(
+            frame,
+            f"Cursor: {int(self._cursor_x)}, {int(self._cursor_y)}",
+            (12, 56),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (225, 225, 225),
+            2,
+            self._cv2.LINE_AA,
+        )
+        self._cv2.putText(
+            frame,
+            f"Shoot: {'YES !!!' if shoot else 'NO'}",
+            (12, 84),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (60, 50, 255) if shoot else (200, 200, 200),
+            2,
+            self._cv2.LINE_AA,
+        )
+        self._cv2.putText(
+            frame,
+            self._status,
+            (12, frame.shape[0] - 14),
+            self._cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (200, 200, 80),
+            1,
+            self._cv2.LINE_AA,
+        )
 
         try:
             self._cv2.imshow(self.debug_window_name, frame)

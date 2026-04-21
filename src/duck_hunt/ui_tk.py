@@ -1470,12 +1470,7 @@ class DuckHuntTkApp:
                 )
             else:
                 crosshair_pos = self.vision_cursor_pos
-            status_surface = self.small_font.render(
-                f"Modo futurista | {self.vision_status_message}",
-                True,
-                (200, 238, 248),
-            )
-            self.screen.blit(status_surface, (20, 20))
+
         else:
             crosshair_pos = pygame.mouse.get_pos()
 
